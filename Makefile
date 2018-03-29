@@ -1,8 +1,10 @@
 train_bayer:
-	python bin/train.py data/images/train/filelist.txt output/bayer --val_data data/images/val/filelist.txt
+	python bin/train.py data/images/train/filelist.txt output/bayer \
+	--pretrained pretrained_models/numpy/bayer \
+	--val_data data/images/train/filelist.txt --batch_size 1
 
-train_bayer:
-	echo "nothing yet"
+# train_bayer:
+# 	echo "nothing yet"
 
 setup: build download_data
 

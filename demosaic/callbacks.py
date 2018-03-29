@@ -5,6 +5,7 @@ import torchlib.viz as viz
 import torchlib.callbacks as callbacks
 from torch.utils.data import DataLoader
 import torchlib.utils as utils
+from torchlib.image import crop_like
 
 class DemosaicVizCallback(callbacks.Callback):
   def __init__(self, data, model, env=None, batch_size=8, 
@@ -31,10 +32,12 @@ class DemosaicVizCallback(callbacks.Callback):
       mosaic = batch_v["mosaic"].data
       target = batch_v["target"].data
       noise_variance = batch_v["noise_variance"].data
-      output = output["output"].data
+      output = output.data
+      target = crop_like(target, output)
+      mosaic = crop_like(mosaic, output)
 
       vizdata = th.cat( [mosaic, output, target], 0)
-      data = np.clip(data.cpu().numpy(), 0, 1)
+      vizdata = np.clip(vizdata.cpu().numpy(), 0, 1)
 
       # Display
       self.batch_viz.update(

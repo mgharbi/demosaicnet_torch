@@ -18,6 +18,7 @@ from torchlib.trainer import Trainer
 import demosaic.dataset as dset
 import demosaic.modules as modules
 import demosaic.callbacks as callbacks
+import demosaic.converter as converter
 import torchlib.callbacks as default_callbacks
 
 log = logging.getLogger("demosaick")
@@ -41,9 +42,16 @@ def main(args, model_params):
   model = modules.get(model_params)
   log.info("Model configuration: {}".format(model_params))
 
+  if args.pretrained:
+    log.info("Loading Caffe weights")
+    cvt = converter.Converter(args.pretrained, model_params["model"])
+    cvt.convert(model)
+
+
   cbacks = [
-      default_callbacks.LossCallback(),
-      callbacks.DemosaicVizCallback(val_data, model, cuda=True, shuffle=True),
+      default_callbacks.LossCallback(env="demosaic"),
+      callbacks.DemosaicVizCallback(val_data, model, cuda=True, 
+                                    shuffle=True, env="demosaic"),
       ]
 
   metrics = {
@@ -74,6 +82,7 @@ if __name__ == "__main__":
   parser.add_argument('output')
   parser.add_argument('--val_data')
   parser.add_argument('--checkpoint')
+  parser.add_argument('--pretrained')
 
   # Training
   parser.add_argument('--batch_size', type=int, default=16)

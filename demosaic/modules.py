@@ -37,13 +37,16 @@ class BayerNetwork(nn.Module):
     self.width = width
 
     layers = OrderedDict([
-        ("pack_mosaic", nn.Conv2d(3, width, 2, stride=2)),  # Downsample 2x2 to re-establish translation invariance
+        ("pack_mosaic", nn.Conv2d(3, 4, 2, stride=2)),  # Downsample 2x2 to re-establish translation invariance
       ])
     for i in range(depth):
       n_out = width
+      n_in = width
+      if i == 0:
+        n_in = 4
       if i == depth-1:
         n_out = 2*width
-      layers["conv{}".format(i+1)] = nn.Conv2d(width, n_out, 3)
+      layers["conv{}".format(i+1)] = nn.Conv2d(n_in, n_out, 3)
       layers["relu{}".format(i+1)] = nn.ReLU(inplace=True)
 
     self.main_processor = nn.Sequential(layers)
@@ -140,4 +143,4 @@ class PSNR(nn.Module):
   def forward(self, data, output):
     target = crop_like(data["target"], output)
     mse = self.mse(output, target)
-    return -20 * th.log(mse) / np.log(10)
+    return -10 * th.log(mse) / np.log(10)

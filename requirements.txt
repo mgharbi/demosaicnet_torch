@@ -6,4 +6,3 @@ tqdm==4.19.4
 torchvision==0.2.0
 setproctitle==1.1.10
 skimage==0.0
-tensorflow==1.7.0

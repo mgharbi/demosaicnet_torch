@@ -1,6 +1,6 @@
 Light reimplementation of <https://github.com/mgharbi/demosaicnet>.
 Runs on python3 (tested on Anaconda for Ubuntu 14.03).
-Other dependencies are listed in requirements
+Other dependencies are listed in requirements.
 
 1. Install
 
