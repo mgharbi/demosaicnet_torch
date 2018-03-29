@@ -1,0 +1,3 @@
+[submodule "torchlib"]
+	path = torchlib
+	url = git@github.com:mgharbi/torchlib.git
