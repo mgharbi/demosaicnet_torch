@@ -2,29 +2,26 @@ Light reimplementation of <https://github.com/mgharbi/demosaicnet>.
 Runs on python3 (tested on Anaconda for Ubuntu 14.03).
 Other dependencies are listed in requirements.
 
-1. Install
+1. Install and download the data
 
 ```
 make setup
 ```
 
-2. Download the data
+2. Launch a visdom server to monitor training and display a few images
 
 ```
-make download_data
+make server
 ```
 
 3. Train a net
 
 ```
-make train_bayer
+make train_demo
 ```
 
-4. Test a net
+4. Test a net (todo)
 
-```
-make test_bayer
-```
 
 Dataset format
 --------------

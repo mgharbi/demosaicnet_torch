@@ -1,7 +1,7 @@
-train_bayer:
-	python bin/train.py data/images/train/filelist.txt output/bayer \
-	--pretrained pretrained_models/numpy/bayer \
-	--val_data data/images/train/filelist.txt --batch_size 1
+train_demo:
+	python bin/train.py demo_data/filelist.txt output/bayer \
+	--pretrained pretrained_models/bayer \
+	--val_data demo_data/filelist.txt --batch_size 1
 
 # train_bayer:
 # 	echo "nothing yet"
@@ -10,6 +10,8 @@ setup: build download_data
 
 build:
 	pip install -r requirements.txt
+	git submodule init
+	git submodule update
 
 # Launch a server to visualize training (port 8097)
 server:
