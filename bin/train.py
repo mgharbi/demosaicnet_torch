@@ -47,11 +47,11 @@ def main(args, model_params):
     cvt = converter.Converter(args.pretrained, model_params["model"])
     cvt.convert(model)
 
-
+  name = os.path.basename(args.output)
   cbacks = [
-      default_callbacks.LossCallback(env="demosaic"),
+      default_callbacks.LossCallback(env=name),
       callbacks.DemosaicVizCallback(val_data, model, cuda=True, 
-                                    shuffle=True, env="demosaic"),
+                                    shuffle=True, env=name),
       ]
 
   metrics = {
@@ -59,11 +59,12 @@ def main(args, model_params):
       }
 
   criteria = {
+      "vgg": modules.VGGLoss(),
       "l2": modules.L2Loss(),
       }
 
   train_params = Trainer.Parameters(
-      viz_step=10, lr=args.lr, batch_size=args.batch_size)
+      viz_step=100, lr=args.lr, batch_size=args.batch_size)
 
   trainer = Trainer(
       data, model, criteria, output=args.output, 
