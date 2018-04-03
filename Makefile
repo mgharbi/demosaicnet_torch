@@ -18,6 +18,11 @@ train_nn:
 		--params model=BayerNN \
 		--val_data data/images/val/filelist.txt --batch_size 64 --lr 1e-4
 
+train_log:
+	python bin/train.py data/images/train/filelist.txt output/log \
+		--params model=BayerLog \
+		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
+
 # train_bayer:
 # 	echo "nothing yet"
 

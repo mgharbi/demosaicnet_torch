@@ -9,11 +9,12 @@ from torch.autograd import Variable
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as tvmodels
 
 from torchlib.modules import Autoencoder
 from torchlib.modules import ConvChain
 from torchlib.image import crop_like
-import torchvision.models as tvmodels
+import torchlib.viz as viz
 
 def get(params):
   params = copy.deepcopy(params)  # do not touch the original
@@ -223,7 +224,7 @@ class BayerNN(nn.Module):
       nn.LeakyReLU(inplace=True),
       nn.Linear(64, 32),
       nn.LeakyReLU(inplace=True),
-      nn.Linear(32, 8),
+      nn.Linear(32, 12),
       )
 
 
@@ -242,46 +243,151 @@ class BayerNN(nn.Module):
     in_f = color_samples.unfold(3, fov, 1).unfold(2, fov, 1)
     in_f = in_f.permute(0, 2, 3, 1, 4, 5)
     bs, h, w, c, _, _ = in_f.shape
-    in_f = in_f.contiguous().view(bs, h*w, c*fov*fov)
+    in_f = in_f.contiguous().view(bs*h*w, c*fov*fov)
 
-    mean_f = in_f.mean(2, keepdim=True)
-    nrm = mean_f + eps
+    # Log normalize =======
+    in_f = th.log(in_f + 1)
 
-    in_f /= nrm
+    mean_f = in_f.mean(1, keepdim=True)
+    in_f -= mean_f
+
+    in_f = th.exp(in_f) - 1.0
+    in_f = in_f.view(bs*h*w, c*fov*fov)
+    # ---------------------
 
     out_f = self.net(in_f)
-    out_f = out_f.view(bs, h*w, 8)
-    out_f *= nrm
 
-    out_f = out_f.view(bs, h, w, 8).permute(0, 3, 1, 2)
+    # Log denormalize =======
+    out_f = th.log(th.clamp(out_f, min=-0.5) + 1)  # clip but keep some gradients
+    out_f += mean_f
+    out_f = th.exp(out_f) - 1.0
+    # ---------------------
 
-    output = mosaic.new()
-    output.resize_(bs, 3, 2*h, 2*w) 
-    output.zero_()
+    out_f = out_f.view(bs, h, w, 3, 2, 2)
 
-    cmosaic = crop_like(mosaic, output)
+    out_f = out_f.permute(0, 3, 1, 4, 2, 5)
+    output = out_f.contiguous().view(bs, 3, h*2, w*2)
 
-    # has green
-    output[:, 0, ::2, ::2] = out_f[:, 0]
-    output[:, 1, ::2, ::2] = cmosaic[:, 1, ::2, ::2]
-    output[:, 2, ::2, ::2] = out_f[:, 1]
+    # output = mosaic.new()
+    # output.resize_(bs, 3, 2*h, 2*w) 
+    # output.zero_()
 
-    # has red
-    output[:, 0, ::2, 1::2] = cmosaic[:, 0, ::2, 1::2]
-    output[:, 1, ::2, 1::2] = out_f[:, 2]
-    output[:, 2, ::2, 1::2] = out_f[:, 3]
+    # cmosaic = crop_like(mosaic, output)
 
-    # has blue
-    output[:, 0, 1::2, 0::2] = out_f[:, 4]
-    output[:, 1, 1::2, 0::2] = out_f[:, 5]
-    output[:, 2, 1::2, 0::2] = cmosaic[:, 2, 1::2, 0::2]
-
-    # has green
-    output[:, 0, 1::2, 1::2] = out_f[:, 6]
-    output[:, 1, 1::2, 1::2] = cmosaic[:, 1, 1::2, 1::2]
-    output[:, 2, 1::2, 1::2] = out_f[:, 7]
+    # # has green
+    # output[:, 0, ::2, ::2] = out_f[:, 0]
+    # output[:, 1, ::2, ::2] = cmosaic[:, 1, ::2, ::2]
+    # output[:, 2, ::2, ::2] = out_f[:, 1]
+    #
+    # # has red
+    # output[:, 0, ::2, 1::2] = cmosaic[:, 0, ::2, 1::2]
+    # output[:, 1, ::2, 1::2] = out_f[:, 2]
+    # output[:, 2, ::2, 1::2] = out_f[:, 3]
+    #
+    # # has blue
+    # output[:, 0, 1::2, 0::2] = out_f[:, 4]
+    # output[:, 1, 1::2, 0::2] = out_f[:, 5]
+    # output[:, 2, 1::2, 0::2] = cmosaic[:, 2, 1::2, 0::2]
+    #
+    # # has green
+    # output[:, 0, 1::2, 1::2] = out_f[:, 6]
+    # output[:, 1, 1::2, 1::2] = cmosaic[:, 1, 1::2, 1::2]
+    # output[:, 2, 1::2, 1::2] = out_f[:, 7]
 
     return output
+
+class BayerLog(nn.Module):
+  """2018-04-01"""
+  def __init__(self, fov=7):
+    super(BayerLog, self).__init__()
+
+    self.fov = fov
+
+    self.net = nn.Sequential(
+      nn.Conv2d(4, 16, 3),
+      nn.LeakyReLU(inplace=True),
+      nn.Conv2d(16, 16, 3),
+      nn.LeakyReLU(inplace=True),
+      nn.Upsample(scale_factor=2),
+      nn.Conv2d(16, 32, 3),
+      nn.LeakyReLU(inplace=True),
+      nn.Conv2d(32, 3, 3),
+      )
+
+    self.debug_viz = viz.BatchVisualizer("batch", env="mosaic_debug")
+    self.debug_viz2 = viz.BatchVisualizer("batch2", env="mosaic_debug")
+    self.debug = False
+
+  def forward(self, samples):
+    mosaic = samples["mosaic"]
+    gray_mosaic = mosaic.sum(1)
+
+    fov = self.fov
+    eps = 1
+
+    color_samples = gray_mosaic.unfold(2, 2, 2).unfold(1, 2, 2)
+    color_samples = color_samples.permute(0, 3, 4, 1, 2)
+    bs, _, _, h, w = color_samples.shape
+    color_samples = color_samples.contiguous().view(bs, 4, h, w)
+
+    in_f = color_samples.unfold(3, fov, 1).unfold(2, fov, 1)
+    in_f = in_f.permute(0, 2, 3, 1, 4, 5)
+    bs, h, w, c, _, _ = in_f.shape
+    in_f = in_f.contiguous().view(bs*h*w, c, fov*fov)
+
+    idx = np.random.randint(0, bs*h*w, size=(128,))
+    vdata = in_f.view(bs*h*w, 1, c*fov, fov).cpu().numpy()[idx]
+
+    # Log-normalize
+    in_f = th.log(in_f + 1)
+
+    mean_f = in_f.mean(2, keepdim=True)
+
+    mean_r = mean_g = mean_b = (mean_f[:, 0] + mean_f[:, 3])*0.5
+    # mean_g = mean_f[:, 0]
+    # mean_b = mean_f[:, 0]
+
+    # mean_g = 0.5*(mean_f[:, 0] + mean_f[:, 3])
+    # mean_r = mean_f[:, 1]
+    # mean_b = mean_f[:, 2]
+
+    in_f[:, 0] -= mean_g
+    in_f[:, 1] -= mean_r
+    in_f[:, 2] -= mean_b
+    in_f[:, 3] -= mean_g
+
+    in_f = th.exp(in_f) - 1.0
+    in_f = in_f.view(bs*h*w, c, fov, fov)
+
+    vdata2 = in_f.view(bs*h*w, 1, c*fov, fov).cpu().numpy()[idx]
+
+    if self.debug:
+      print(vdata.min().item(), vdata.max().item())
+      print(vdata2.min().item(), vdata2.max().item())
+      vdata -= vdata.min()
+      vdata /= vdata.max()
+      vdata2 -= vdata2.min()
+      vdata2 /= vdata2.max()
+      vdata2 = vdata2.clip(0, 1)
+      self.debug_viz.update(vdata,
+                            per_row=8, caption="normalized inputs")
+      self.debug_viz2.update(vdata2,
+                            per_row=8, caption="normalized inputs")
+
+    out_f = self.net(in_f)
+
+    # Log-denormalize
+    out_f = th.log(th.clamp(out_f, min=-0.5) + 1)  # clip but keep some gradients
+    out_f = out_f.view(bs*h*w, 3, 2*2)
+    out_f[:, 0, :] += mean_r
+    out_f[:, 1, :] += mean_g
+    out_f[:, 2, :] += mean_b
+    out_f = th.exp(out_f) - 1.0
+
+    out_f = out_f.view(bs, h, w, 3, 2, 2).permute(0, 3, 1, 4, 2, 5)
+    out_f = out_f.contiguous().view(bs, 3, 2*h, 2*w)
+
+    return out_f
 
 
 class L2Loss(nn.Module):

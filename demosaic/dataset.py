@@ -15,11 +15,14 @@ from torchlib.utils import Timer
 log = logging.getLogger("demosaic_data")
 
 class DemosaicDataset(Dataset):
-  def __init__(self, filelist, add_noise=False, max_noise=0.1, transform=None):
+  def __init__(self, filelist, add_noise=False, max_noise=0.1, transform=None, 
+               augment=False):
     self.transform = transform
 
     self.add_noise = add_noise
     self.max_noise = max_noise
+
+    self.augment = augment
 
     if not os.path.splitext(filelist)[-1] == ".txt":
       raise ValueError("Dataset should be speficied as a .txt file")
@@ -43,6 +46,26 @@ class DemosaicDataset(Dataset):
 
     # read image
     im = skio.imread(impath).astype(np.float32) / 255.0
+
+    if self.augment:
+      if np.random.uniform() < 0.5:
+        im = np.fliplr(im)
+      if np.random.uniform() < 0.5:
+        im = np.flipud(im)
+
+      im = np.rot90(im, k=np.random.randint(0, 4))
+
+      # Pixel shift
+      if np.random.uniform() < 0.5:
+        im = np.roll(im, 1, 0)
+      if np.random.uniform() < 0.5:
+        im = np.roll(im, 1, 1)
+
+      im *= np.random.uniform(0.5, 1.2)
+
+      im = np.ascontiguousarray(im)
+
+
     im = np.transpose(im, [2, 1, 0])
 
     # add noise

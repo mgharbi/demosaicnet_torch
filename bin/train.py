@@ -30,11 +30,11 @@ def main(args, model_params):
 
   # ------------ Set up datasets ----------------------------------------------
   xforms = dset.ToTensor()
-  data = dset.BayerDataset(args.data_dir, transform=xforms)
+  data = dset.BayerDataset(args.data_dir, transform=xforms, augment=True)
   data[0]
 
   if args.val_data is not None:
-    val_data = dset.BayerDataset(args.val_data, transform=xforms)
+    val_data = dset.BayerDataset(args.val_data, transform=xforms, augment=False)
   else:
     val_data = None
   # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@ def main(args, model_params):
       }
 
   criteria = {
-      "vgg": modules.VGGLoss(),
+      # "vgg": modules.VGGLoss(),
       "l2": modules.L2Loss(),
       }
 

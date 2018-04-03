@@ -20,8 +20,8 @@ class DemosaicVizCallback(callbacks.Callback):
         data, batch_size=batch_size,
         shuffle=shuffle, num_workers=0, drop_last=True)
 
-  # def on_epoch_end(self, epoch, logs):
-  def on_batch_end(self, batch, num_batches, logs):
+  def on_epoch_end(self, epoch, logs):
+  # def on_batch_end(self, batch, num_batches, logs):
     for batch in self.loader:
       # Get a batch
       batch_v = utils.make_variable(batch, cuda=self._cuda)
