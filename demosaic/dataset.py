@@ -7,6 +7,8 @@ import time
 import numpy as np
 import skimage.io as skio
 import torch as th
+# from scipy.stats import ortho_group
+from skimage.color import rgb2hsv, hsv2rgb
 
 from torch.utils.data import Dataset
 from torchlib.image import read_pfm
@@ -61,10 +63,20 @@ class DemosaicDataset(Dataset):
       if np.random.uniform() < 0.5:
         im = np.roll(im, 1, 1)
 
-      im *= np.random.uniform(0.5, 1.2)
 
-      im = np.ascontiguousarray(im)
+      if np.random.uniform() < 0.5:
+        shift = np.random.uniform(-0.1, 0.1)
+        im = rgb2hsv(im)
+        im[:, :, 0] = np.mod(im[:, :, 0] + shift, 1)
+        im = hsv2rgb(im)
 
+      # Randomize exposure
+      if np.random.uniform() < 0.5:
+        im *= np.random.uniform(0.5, 1.2)
+
+      im = np.clip(im, 0, 1)
+
+      im = np.ascontiguousarray(im).astype(np.float32)
 
     im = np.transpose(im, [2, 1, 0])
 

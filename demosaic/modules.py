@@ -210,10 +210,11 @@ class BayerExperimental(nn.Module):
 
 class BayerNN(nn.Module):
   """2018-03-30"""
-  def __init__(self, fov=5):
+  def __init__(self, fov=5, normalize=True):
     super(BayerNN, self).__init__()
 
     self.fov = fov
+    self.normalize = normalize
 
     self.net = nn.Sequential(
       nn.Linear(fov*fov*4, 128),
@@ -226,7 +227,6 @@ class BayerNN(nn.Module):
       nn.LeakyReLU(inplace=True),
       nn.Linear(32, 12),
       )
-
 
   def forward(self, samples):
     mosaic = samples["mosaic"]
@@ -246,53 +246,30 @@ class BayerNN(nn.Module):
     in_f = in_f.contiguous().view(bs*h*w, c*fov*fov)
 
     # Log normalize =======
-    in_f = th.log(in_f + 1)
+    if self.normalize:
+      in_f = th.log(in_f + 1)
 
-    mean_f = in_f.mean(1, keepdim=True)
-    in_f -= mean_f
+      mean_f = in_f.mean(1, keepdim=True)
+      in_f -= mean_f
 
-    in_f = th.exp(in_f) - 1.0
-    in_f = in_f.view(bs*h*w, c*fov*fov)
+      in_f = th.exp(in_f) - 1.0
     # ---------------------
+
+    in_f = in_f.view(bs*h*w, c*fov*fov)
 
     out_f = self.net(in_f)
 
     # Log denormalize =======
-    out_f = th.log(th.clamp(out_f, min=-0.5) + 1)  # clip but keep some gradients
-    out_f += mean_f
-    out_f = th.exp(out_f) - 1.0
+    if self.normalize:
+      out_f = th.log(th.clamp(out_f, min=-0.5) + 1)  # clip but keep some gradients
+      out_f += mean_f
+      out_f = th.exp(out_f) - 1.0
     # ---------------------
 
     out_f = out_f.view(bs, h, w, 3, 2, 2)
 
     out_f = out_f.permute(0, 3, 1, 4, 2, 5)
     output = out_f.contiguous().view(bs, 3, h*2, w*2)
-
-    # output = mosaic.new()
-    # output.resize_(bs, 3, 2*h, 2*w) 
-    # output.zero_()
-
-    # cmosaic = crop_like(mosaic, output)
-
-    # # has green
-    # output[:, 0, ::2, ::2] = out_f[:, 0]
-    # output[:, 1, ::2, ::2] = cmosaic[:, 1, ::2, ::2]
-    # output[:, 2, ::2, ::2] = out_f[:, 1]
-    #
-    # # has red
-    # output[:, 0, ::2, 1::2] = cmosaic[:, 0, ::2, 1::2]
-    # output[:, 1, ::2, 1::2] = out_f[:, 2]
-    # output[:, 2, ::2, 1::2] = out_f[:, 3]
-    #
-    # # has blue
-    # output[:, 0, 1::2, 0::2] = out_f[:, 4]
-    # output[:, 1, 1::2, 0::2] = out_f[:, 5]
-    # output[:, 2, 1::2, 0::2] = cmosaic[:, 2, 1::2, 0::2]
-    #
-    # # has green
-    # output[:, 0, 1::2, 1::2] = out_f[:, 6]
-    # output[:, 1, 1::2, 1::2] = cmosaic[:, 1, 1::2, 1::2]
-    # output[:, 2, 1::2, 1::2] = out_f[:, 7]
 
     return output
 

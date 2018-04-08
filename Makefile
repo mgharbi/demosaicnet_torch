@@ -16,6 +16,11 @@ train_exp:
 train_nn:
 	python bin/train.py data/images/train/filelist.txt output/nn \
 		--params model=BayerNN \
+		--val_data data/images/val/filelist.txt --batch_size 128 --lr 1e-5
+
+train_nn_unnormalized:
+	python bin/train.py data/images/train/filelist.txt output/nn_unnormalized \
+		--params model=BayerNN normalize=False\
 		--val_data data/images/val/filelist.txt --batch_size 64 --lr 1e-4
 
 train_log:
