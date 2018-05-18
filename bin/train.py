@@ -21,6 +21,7 @@ import demosaic.losses as losses
 import demosaic.callbacks as callbacks
 import demosaic.converter as converter
 import torchlib.callbacks as default_callbacks
+import torchlib.optim as toptim
 
 log = logging.getLogger("demosaick")
 
@@ -69,6 +70,7 @@ def main(args, model_params):
 
   train_params = Trainer.Parameters(
       viz_step=100, lr=args.lr, batch_size=args.batch_size)
+      # optimizer=toptim.SVAG)
 
   trainer = Trainer(
       data, model, criteria, output=args.output, 

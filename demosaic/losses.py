@@ -89,7 +89,7 @@ class VGGLoss(nn.Module):
     for i, s in enumerate(self.net):
       x = s(x)
       if self.normalize:  # unit L2 norm over features, this implies the loss is a cosine loss in feature space 
-        f = x / th.sqrt(th.pow(x, 2).sum(1, keepdim=True))
+        f = x / (th.sqrt(th.pow(x, 2).sum(1, keepdim=True)) + 1e-8)
       else:
         f = x
       feats.append(f)

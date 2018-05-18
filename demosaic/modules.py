@@ -407,6 +407,7 @@ class BayerKP(nn.Module):
 
     self.ksize = ksize
 
+    # TODO: replace with a skip-autoencoder for speed
     self.kernels = ConvChain(
         4, 10*ksize*ksize, width=64, depth=5, pad=False,
         activation="relu", output_type="linear")
@@ -429,9 +430,10 @@ class BayerKP(nn.Module):
     kernels = self.kernels(color_samples)
     bs, _, h, w = kernels.shape
 
+    # TODO: check what's going on
     g0 = color_samples[:, 0:1]
-    r = color_samples[:, 1:2]
-    b = color_samples[:, 2:3]
+    b = color_samples[:, 1:2]
+    r = color_samples[:, 2:3]
     g1 = color_samples[:, 3:4]
 
     idx = 0

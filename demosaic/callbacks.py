@@ -9,7 +9,7 @@ from torchlib.image import crop_like
 
 class DemosaicVizCallback(callbacks.Callback):
   def __init__(self, data, model, env=None, batch_size=8, 
-               shuffle=False, cuda=True):
+               shuffle=False, cuda=True, period=100):
     super(DemosaicVizCallback, self).__init__()
     self.batch_size = batch_size
     self.model = model
@@ -20,8 +20,16 @@ class DemosaicVizCallback(callbacks.Callback):
         data, batch_size=batch_size,
         shuffle=shuffle, num_workers=0, drop_last=True)
 
-  def on_epoch_end(self, epoch, logs):
-  # def on_batch_end(self, batch, num_batches, logs):
+    self.period = period
+    self.counter = 0
+
+  # def on_epoch_end(self, epoch, logs):
+  def on_batch_end(self, batch, batch_id, num_batches, logs):
+    if self.counter % self.period != 0:
+      self.counter += 1
+      return
+
+    self.counter = 0
     for batch in self.loader:
       # Get a batch
       batch_v = utils.make_variable(batch, cuda=self._cuda)
