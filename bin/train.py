@@ -17,6 +17,7 @@ from torchlib.trainer import Trainer
 
 import demosaic.dataset as dset
 import demosaic.modules as modules
+import demosaic.losses as losses
 import demosaic.callbacks as callbacks
 import demosaic.converter as converter
 import torchlib.callbacks as default_callbacks
@@ -55,13 +56,16 @@ def main(args, model_params):
       ]
 
   metrics = {
-      "psnr": modules.PSNR()
+      "psnr": losses.PSNR()
       }
 
-  criteria = {
-      # "vgg": modules.VGGLoss(),
-      "l2": modules.L2Loss(),
-      }
+  log.info("Using {} loss".format(args.loss))
+  if args.loss == "l2":
+    criteria = { "l2": losses.L2Loss(), }
+  elif args.loss == "vgg":
+    criteria = { "vgg": losses.VGGLoss(), }
+  else:
+    raise ValueError("not implemented")
 
   train_params = Trainer.Parameters(
       viz_step=100, lr=args.lr, batch_size=args.batch_size)
@@ -89,7 +93,7 @@ if __name__ == "__main__":
   parser.add_argument('--batch_size', type=int, default=16)
   parser.add_argument('--lr', type=float, default=1e-4)
   parser.add_argument('--fix_seed', dest="fix_seed", action="store_true")
-  parser.add_argument('--loss', default="l1", choices=["l1"])
+  parser.add_argument('--loss', default="l2", choices=["l1", "vgg", "l2"])
 
   # Monitoring
   parser.add_argument('--debug', dest="debug", action="store_true")

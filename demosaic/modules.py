@@ -9,12 +9,44 @@ from torch.autograd import Variable
 import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as tvmodels
 
 from torchlib.modules import Autoencoder
 from torchlib.modules import ConvChain
 from torchlib.image import crop_like
 import torchlib.viz as viz
+
+
+def apply_kernels(kernel, noisy_data):
+  kh, kw = kernel.shape[2:]
+  bs, ci, h, w = noisy_data.shape
+  ksize = int(np.sqrt(kernel.shape[1]))
+
+  # Crop kernel and input so their sizes match
+  needed = kh + ksize - 1
+  if needed > h:
+    crop = (needed - h) // 2
+    if crop > 0:
+      kernel = kernel[:, :, crop:-crop, crop:-crop]
+    kh, kw = kernel.shape[2:]
+  else:
+    crop = (h - needed) // 2
+    if crop > 0:
+      noisy_data = noisy_data[:, :, crop:-crop, crop:-crop]
+
+  # -------------------------------------------------------------------------
+  # Vectorize the kernel tiles
+  kernel = kernel.permute(0, 2, 3, 1)
+  kernel = kernel.contiguous().view(bs, 1, kh, kw, ksize*ksize)
+
+  # Split the input buffer in tiles matching the kernels
+  tiles = noisy_data.unfold(2, ksize, 1).unfold(3, ksize, 1)
+  tiles = tiles.contiguous().view(bs, ci, kh, kw, ksize*ksize)
+  # -------------------------------------------------------------------------
+
+  weighted_sum = th.sum(kernel*tiles, dim=4)
+  
+  return weighted_sum
+
 
 def get(params):
   params = copy.deepcopy(params)  # do not touch the original
@@ -366,61 +398,103 @@ class BayerLog(nn.Module):
 
     return out_f
 
+class BayerKP(nn.Module):
+  """2018-05-18: kernel-predicting Bayer"""
+  def __init__(self, ksize=7, normalize=True):
+    """ ksize is the footprint at 1/4 res."""
 
-class L2Loss(nn.Module):
-  """ """
-  def __init__(self, weight=1.0):
-    super(L2Loss, self).__init__()
-    self.mse = nn.MSELoss()
-    self.weight = weight
+    super(BayerKP, self).__init__()
 
-  def forward(self, data, output):
-    target = crop_like(data["target"], output)
-    return self.mse(output, target) * self.weight
+    self.ksize = ksize
 
+    self.kernels = ConvChain(
+        4, 10*ksize*ksize, width=64, depth=5, pad=False,
+        activation="relu", output_type="linear")
 
-class PSNR(nn.Module):
-  """ """
-  def __init__(self):
-    super(PSNR, self).__init__()
-    self.mse = nn.MSELoss()
+  def unroll(self, buf):
+    """ Reshapes a 1/4 res buffer with shape [bs, 4, h, w] to fullres.""" 
+    bs, _, h, w = buf.shape
+    buf = buf.view(bs, 2, 2, h, w).permute(0, 3, 1, 4, 2).contiguous().view(bs, 1, h*2, w*2)
+    return buf
 
-  def forward(self, data, output):
-    target = crop_like(data["target"], output)
-    mse = self.mse(output, target)
-    return -10 * th.log(mse) / np.log(10)
+  def forward(self, samples):
+    mosaic = samples["mosaic"]
+    gray_mosaic = mosaic.sum(1)
 
+    color_samples = gray_mosaic.unfold(2, 2, 2).unfold(1, 2, 2)
+    color_samples = color_samples.permute(0, 3, 4, 1, 2)
+    bs, _, _, h, w = color_samples.shape
+    color_samples = color_samples.contiguous().view(bs, 4, h, w)
 
-class VGGLoss(nn.Module):
-  """ """
-  def __init__(self, weight=1.0):
-    super(VGGLoss, self).__init__()
-    self.mse = nn.MSELoss()
-    self.weight = weight
+    kernels = self.kernels(color_samples)
+    bs, _, h, w = kernels.shape
 
-    self.vgg = tvmodels.vgg19(pretrained=True)
-    self.layers = self.vgg.features
-    self.layer_name_mapping = {
-        '3': "relu1_2",
-        '8': "relu2_2",
-        '15': "relu3_3",
-        '22': "relu4_3"
-        }
+    g0 = color_samples[:, 0:1]
+    r = color_samples[:, 1:2]
+    b = color_samples[:, 2:3]
+    g1 = color_samples[:, 3:4]
 
-  def forward(self, data, output):
-    target = crop_like(data["target"], output)
-    output_f = self.get_features(output)
-    with th.no_grad():
-      target_f = self.get_features(target)
-    losses = []
-    for k in output_f:
-      losses.append(self.mse(output_f[k], target_f[k]))
-    return sum(losses) * self.weight
+    idx = 0
+    ksize = self.ksize
 
-  def get_features(self, x):
-    output = {}
-    for name, module in self.layers._modules.items():
-      x = module(x)
-      if name in self.layer_name_mapping:
-        output[self.layer_name_mapping[name]] = x
+    # Reconstruct 3 reds from known red
+    reds = [r]
+    for i in range(3):
+      k = kernels[:, idx:idx+ksize*ksize]
+      k = F.softmax(k, 1)
+      idx += ksize*ksize
+      reds.append(apply_kernels(k, r))
+
+    # remove unused boundaries
+    reds[0] = crop_like(reds[0], reds[1])
+
+    # Reorder 2x2 tile, known red is 0, pattern is:
+    # . R  -> 1 0
+    # . .     2 3
+    reds = [reds[1], reds[0], reds[2], reds[3]]
+    red = self.unroll(th.cat(reds, 1))
+
+    # Reconstruct 3 blues from known blue
+    blues = [b]
+    for i in range(3):
+      k = kernels[:, idx:idx+ksize*ksize]
+      k = F.softmax(k, 1)
+      idx += ksize*ksize
+      blues.append(apply_kernels(k, b))
+
+    # remove unused boundaries
+    blues[0] = crop_like(blues[0], blues[1])
+
+    # Reorder 2x2 tile, known blue is 0, pattern is:
+    # . .  -> 1 2
+    # B .     0 3
+    blues = [blues[1], blues[2], blues[0], blues[3]]
+    blue = self.unroll(th.cat(blues, 1))
+
+    # Reconstruct 2 greens from known greens
+    greens = [g0, g1]
+    for i in range(2):
+      k = kernels[:, idx:idx + 2*ksize*ksize]
+      k = F.softmax(k, 1) # jointly normalize the weights
+
+      from_g0 = apply_kernels(k[:, 0:ksize*ksize], g0)
+      from_g1 = apply_kernels(k[:, ksize*ksize:2*ksize*ksize], g1)
+
+      greens.append(from_g0+from_g1)
+
+      idx += 2*ksize*ksize
+
+    # remove unused boundaries
+    greens[0] = crop_like(greens[0], greens[2])
+    greens[1] = crop_like(greens[1], greens[2])
+
+    # Reorder 2x2 tile, known blue is 0, pattern is:
+    # G .  -> 0 2
+    # . G     3 1
+    greens = [greens[0], greens[2], greens[3], greens[1]]
+    green = self.unroll(th.cat(greens, 1))
+
+    output = th.cat([red, green, blue], 1)
+
     return output
+

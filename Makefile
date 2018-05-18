@@ -25,7 +25,12 @@ train_nn_unnormalized:
 
 train_log:
 	python bin/train.py data/images/train/filelist.txt output/log \
-		--params model=BayerLog \
+		--params model=BayerLog --loss vgg \
+		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
+
+train_kp_bayer:
+	python bin/train.py data/images/train/filelist.txt output/kp_bayer \
+		--params model=BayerKP --loss vgg \
 		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
 
 # train_bayer:
