@@ -31,7 +31,20 @@ train_log:
 train_kp_bayer:
 	python bin/train.py data/images/train/filelist.txt output/kp_bayer \
 		--params model=BayerKP --loss vgg \
+		--pretrained pretrained_models/bayer \
 		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
+
+train_kpae_bayer:
+	python bin/train.py data/images/train/filelist.txt output/kpae_bayer \
+		--params model=BayerKP autoencoder=True --loss vgg \
+		--pretrained pretrained_models/bayer \
+		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
+
+train_kpae_bayer_l2:
+	python bin/train.py data/images/train/filelist.txt output/kpae_bayer_l2 \
+		--params model=BayerKP autoencoder=True --loss l2 \
+		--pretrained pretrained_models/bayer \
+		--val_data data/images/val/filelist.txt --batch_size 16 --lr 1e-5
 
 # train_bayer:
 # 	echo "nothing yet"

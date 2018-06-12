@@ -45,14 +45,18 @@ def main(args, model_params):
   log.info("Model configuration: {}".format(model_params))
 
   if args.pretrained:
+    model_ref = modules.get({"model": "BayerNetwork"})
     log.info("Loading Caffe weights")
-    cvt = converter.Converter(args.pretrained, model_params["model"])
-    cvt.convert(model)
+    cvt = converter.Converter(args.pretrained, "BayerNetwork")
+    cvt.convert(model_ref)
+    model_ref.cuda()
+  else:
+    model_ref = None
 
   name = os.path.basename(args.output)
   cbacks = [
       default_callbacks.LossCallback(env=name),
-      callbacks.DemosaicVizCallback(val_data, model, cuda=True, 
+      callbacks.DemosaicVizCallback(val_data, model, model_ref, cuda=True, 
                                     shuffle=True, env=name),
       ]
 

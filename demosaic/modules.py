@@ -400,17 +400,21 @@ class BayerLog(nn.Module):
 
 class BayerKP(nn.Module):
   """2018-05-18: kernel-predicting Bayer"""
-  def __init__(self, ksize=7, normalize=True):
+  def __init__(self, ksize=7, autoencoder=False):
     """ ksize is the footprint at 1/4 res."""
 
     super(BayerKP, self).__init__()
 
     self.ksize = ksize
 
-    # TODO: replace with a skip-autoencoder for speed
-    self.kernels = ConvChain(
-        4, 10*ksize*ksize, width=64, depth=5, pad=False,
-        activation="relu", output_type="linear")
+    if autoencoder:
+      self.kernels = Autoencoder(4, 10*ksize*ksize, width=64, increase_factor=1.4,
+          num_levels=5, num_convs=2, activation="leaky_relu")
+          # normalization_type="instance", normalize=True)
+    else:
+      self.kernels = ConvChain(
+          4, 10*ksize*ksize, width=64, depth=5, pad=False,
+          activation="relu", output_type="linear")
 
   def unroll(self, buf):
     """ Reshapes a 1/4 res buffer with shape [bs, 4, h, w] to fullres.""" 
