@@ -23,6 +23,8 @@ class Converter(object):
 
       # Overwiter
       # print(p.mean().item(), p.std().item())
+      # import ipdb; ipdb.set_trace()
+      # print(name, old_name, p.shape, data.shape)
       p.data.copy_(th.from_numpy(data))
       # print(p.mean().item(), p.std().item())
 

@@ -71,3 +71,18 @@ class DemosaicVizCallback(callbacks.Callback):
             self.current_epoch, psnr, psnr_ref))
 
       return  # process only one batch
+
+
+class PSNRCallback(callbacks.Callback):
+  def __init__(self, env=None):
+    super(PSNRCallback, self).__init__()
+    self.viz = viz.ScalarVisualizer(
+        "psnr", opts={"legend": ["train", "val"]}, env=env)
+
+  def on_batch_end(self, batch, batch_id, num_batches, logs):
+    frac = self.get_frac(batch_id, num_batches)
+    self.viz.update(frac, logs["psnr"], name="train")
+
+  def on_epoch_end(self, epoch, logs):
+    if logs:
+      self.viz.update(epoch, logs["psnr"], name="val")

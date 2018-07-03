@@ -32,11 +32,17 @@ def main(args, model_params):
 
   # ------------ Set up datasets ----------------------------------------------
   xforms = dset.ToTensor()
-  data = dset.BayerDataset(args.data_dir, transform=xforms, augment=True)
+  if args.xtrans:
+    data = dset.XtransDataset(args.data_dir, transform=xforms, augment=True)
+  else:
+    data = dset.BayerDataset(args.data_dir, transform=xforms, augment=True)
   data[0]
 
   if args.val_data is not None:
-    val_data = dset.BayerDataset(args.val_data, transform=xforms, augment=False)
+    if args.xtrans:
+      val_data = dset.XtransDataset(args.val_data, transform=xforms, augment=False)
+    else:
+      val_data = dset.BayerDataset(args.val_data, transform=xforms, augment=False)
   else:
     val_data = None
   # ---------------------------------------------------------------------------
@@ -45,9 +51,13 @@ def main(args, model_params):
   log.info("Model configuration: {}".format(model_params))
 
   if args.pretrained:
-    model_ref = modules.get({"model": "BayerNetwork"})
     log.info("Loading Caffe weights")
-    cvt = converter.Converter(args.pretrained, "BayerNetwork")
+    if args.xtrans:
+      model_ref = modules.get({"model": "XtransNetwork"})
+      cvt = converter.Converter(args.pretrained, "XtransNetwork")
+    else:
+      model_ref = modules.get({"model": "BayerNetwork"})
+      cvt = converter.Converter(args.pretrained, "BayerNetwork")
     cvt.convert(model_ref)
     model_ref.cuda()
   else:
@@ -58,6 +68,7 @@ def main(args, model_params):
       default_callbacks.LossCallback(env=name),
       callbacks.DemosaicVizCallback(val_data, model, model_ref, cuda=True, 
                                     shuffle=True, env=name),
+      callbacks.PSNRCallback(env=name),
       ]
 
   metrics = {
@@ -103,12 +114,13 @@ if __name__ == "__main__":
 
   # Monitoring
   parser.add_argument('--debug', dest="debug", action="store_true")
+  parser.add_argument('--xtrans', dest="xtrans", action="store_true")
 
   # Model
   parser.add_argument(
       '--params', nargs="*", default=["model=BayerNetwork"])
 
-  parser.set_defaults(debug=False, fix_seed=False)
+  parser.set_defaults(debug=False, fix_seed=False, xtrans=False)
 
   args = parser.parse_args()
 

@@ -1,3 +1,32 @@
+inspect:
+	python bin/inspect_model.py output/simple_kp_bayer data/real_mosaic/bayer output/kernel_viz --offset_x 1 --offset_y 0 \
+		--shift_x 1024 --shift_y 1024
+
+eval_bayer_kpae:
+	python bin/eval.py output/kpae_bayer_l2 data/real_mosaic/bayer output/eval/bayer --offset_x 1 \
+	--pretrained pretrained_models/bayer
+
+eval_bayer_kp:
+	python bin/eval.py output/kp_bayer data/real_mosaic/bayer output/eval/bayer --offset_x 1 \
+	--pretrained pretrained_models/bayer
+
+eval_bayer_nn:
+	python bin/eval.py output/nn data/real_mosaic/bayer output/eval/bayer --offset_x 1 \
+	--pretrained pretrained_models/bayer
+
+# train
+train_simple_kp_bayer:
+	python bin/train.py data/images/train/filelist.txt output/simple_kp_bayer \
+		--params model=SimpleKP mosaic_period=2 --loss l2\
+		--pretrained pretrained_models/bayer \
+		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
+
+train_simple_kp_xtrans:
+	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/train/filelist.txt output/simple_kp_xtrans \
+		--params model=SimpleKP mosaic_period=6 --loss l2 \
+		--pretrained pretrained_models/xtrans --xtrans \
+		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
+
 train_demo:
 	python bin/train.py demo_data/filelist.txt output/bayer \
 	--pretrained pretrained_models/bayer \
@@ -38,11 +67,17 @@ train_kpae_bayer:
 	python bin/train.py data/images/train/filelist.txt output/kpae_bayer \
 		--params model=BayerKP autoencoder=True --loss vgg \
 		--pretrained pretrained_models/bayer \
-		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-4
+		--val_data data/images/val/filelist.txt --batch_size 4 --lr 1e-5
 
 train_kpae_bayer_l2:
 	python bin/train.py data/images/train/filelist.txt output/kpae_bayer_l2 \
 		--params model=BayerKP autoencoder=True --loss l2 \
+		--pretrained pretrained_models/bayer \
+		--val_data data/images/val/filelist.txt --batch_size 16 --lr 1e-5
+
+train_kpae_bayer_small:
+	python bin/train.py data/images/train/filelist.txt output/kpae_bayer_small \
+		--params model=BayerKP autoencoder=True convs=1 levels=3 width=32 ksize=5 --loss l2 \
 		--pretrained pretrained_models/bayer \
 		--val_data data/images/val/filelist.txt --batch_size 16 --lr 1e-5
 

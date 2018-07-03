@@ -120,23 +120,26 @@ class XtransNetwork(nn.Module):
 
   """
   def __init__(self, depth=11, width=64):
-    super(BayerNetwork, self).__init__()
+    super(XtransNetwork, self).__init__()
 
     self.depth = depth
     self.width = width
 
     layers = OrderedDict([])
     for i in range(depth):
+      n_in = width
       n_out = width
-      if i == depth-1:
-        n_out = 2*width
-      layers["conv{}".format(i+1)] = nn.Conv2d(width, n_out, 3)
+      if i == 0:
+        n_in = 3
+      # if i == depth-1:
+      #   n_out = 2*width
+      layers["conv{}".format(i+1)] = nn.Conv2d(n_in, n_out, 3)
       layers["relu{}".format(i+1)] = nn.ReLU(inplace=True)
 
     self.main_processor = nn.Sequential(layers)
 
     self.fullres_processor = nn.Sequential(OrderedDict([
-      ("post_conv", nn.Conv2d(3, width, 3)),
+      ("post_conv", nn.Conv2d(3+width, width, 3)),
       ("post_relu", nn.ReLU(inplace=True)),
       ("output", nn.Conv2d(width, 3, 1)),
       ]))
@@ -400,7 +403,7 @@ class BayerLog(nn.Module):
 
 class BayerKP(nn.Module):
   """2018-05-18: kernel-predicting Bayer"""
-  def __init__(self, ksize=7, autoencoder=False):
+  def __init__(self, ksize=7, convs=2, levels=5, width=64, autoencoder=False):
     """ ksize is the footprint at 1/4 res."""
 
     super(BayerKP, self).__init__()
@@ -408,12 +411,12 @@ class BayerKP(nn.Module):
     self.ksize = ksize
 
     if autoencoder:
-      self.kernels = Autoencoder(4, 10*ksize*ksize, width=64, increase_factor=1.4,
-          num_levels=5, num_convs=2, activation="leaky_relu")
+      self.kernels = Autoencoder(4, 10*ksize*ksize, width=width, increase_factor=1.4,
+          num_levels=levels, num_convs=convs, activation="leaky_relu")
           # normalization_type="instance", normalize=True)
     else:
       self.kernels = ConvChain(
-          4, 10*ksize*ksize, width=64, depth=5, pad=False,
+          4, 10*ksize*ksize, width=64, depth=levels, pad=False,
           activation="relu", output_type="linear")
 
   def unroll(self, buf):
@@ -422,7 +425,9 @@ class BayerKP(nn.Module):
     buf = buf.view(bs, 2, 2, h, w).permute(0, 3, 1, 4, 2).contiguous().view(bs, 1, h*2, w*2)
     return buf
 
-  def forward(self, samples):
+  def forward(self, samples, kernels=None):
+    start = time.time()
+
     mosaic = samples["mosaic"]
     gray_mosaic = mosaic.sum(1)
 
@@ -433,6 +438,10 @@ class BayerKP(nn.Module):
 
     kernels = self.kernels(color_samples)
     bs, _, h, w = kernels.shape
+
+    # th.cuda.synchronize()
+    # elapsed = time.time() - start
+    # print("Forward {:.0f} ms".format(elapsed*1000))
 
     # TODO: check what's going on
     g0 = color_samples[:, 0:1]
@@ -501,6 +510,57 @@ class BayerKP(nn.Module):
     green = self.unroll(th.cat(greens, 1))
 
     output = th.cat([red, green, blue], 1)
+
+    # th.cuda.synchronize()
+    # elapsed = time.time() - start
+    # print("Forward+Apply {:.0f} ms".format(elapsed*1000))
+
+    return output
+
+class SimpleKP(nn.Module):
+  """2018-07-03: kernel-predicting Bayer"""
+  def __init__(self, ksize=5, convs=1, levels=3, width=32, mosaic_period=2):
+
+    super(SimpleKP, self).__init__()
+
+    self.ksize = ksize
+
+    self.kernels = Autoencoder(3, 3*ksize*ksize, width=width, increase_factor=1.4,
+        num_levels=levels, num_convs=convs, activation="leaky_relu",
+        normalization_type="instance", normalize=True)
+
+    self.period = mosaic_period
+
+  def forward(self, samples, kernel_list=None):
+    start = time.time()
+
+    mosaic = samples["mosaic"]
+    gray_mosaic = mosaic.sum(1, keepdim=True)
+    bs, _, h, w = gray_mosaic.shape
+
+    x = th.fmod(th.arange(0, w).float().cuda(), 2).view(1, 1, 1, w).repeat(bs, 1, h, 1)
+    y = th.fmod(th.arange(0, h).float().cuda(), 2).view(1, 1, h, 1).repeat(bs, 1, 1, w)
+
+    indata = th.cat([gray_mosaic, x, y], 1)
+
+    kernels = self.kernels(indata)
+    bs, _, h, w = kernels.shape
+
+
+    idx = 0
+    ksize = self.ksize
+    chans = []
+    for i in range(3):
+      k = kernels[:, idx:idx+ksize*ksize]
+      k = k / (k.abs().sum(1, keepdim=True) + 1e-4)
+      # k = F.softmax(k, 1)
+      idx += ksize*ksize
+      chans.append(apply_kernels(k, gray_mosaic))
+
+      if kernel_list is not None:
+        kernel_list.append(k.view(bs, ksize, ksize, h, w))
+
+    output = th.cat(chans, 1)
 
     return output
 
