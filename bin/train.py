@@ -31,11 +31,14 @@ def main(args, model_params):
     th.manual_seed(0)
 
   # ------------ Set up datasets ----------------------------------------------
-  xforms = dset.ToTensor()
+  xforms = [dset.ToTensor()]
+  if args.green_only:
+    xforms.append(dset.GreenOnly())
+  xforms = transforms.Compose(xforms)
   if args.xtrans:
-    data = dset.XtransDataset(args.data_dir, transform=xforms, augment=True)
+    data = dset.XtransDataset(args.data_dir, transform=xforms, augment=True, linearize=args.linear)
   else:
-    data = dset.BayerDataset(args.data_dir, transform=xforms, augment=True)
+    data = dset.BayerDataset(args.data_dir, transform=xforms, augment=True, linearize=args.linear)
   data[0]
 
   if args.val_data is not None:
@@ -62,6 +65,14 @@ def main(args, model_params):
     model_ref.cuda()
   else:
     model_ref = None
+
+  if args.green_only:
+    model = modules.GreenOnly(model)
+    model_ref = modules.GreenOnly(model_ref)
+
+  if args.linear:
+    model = modules.DeLinearize(model)
+    model_ref = modules.DeLinearize(model_ref)
 
   name = os.path.basename(args.output)
   cbacks = [
@@ -114,13 +125,15 @@ if __name__ == "__main__":
 
   # Monitoring
   parser.add_argument('--debug', dest="debug", action="store_true")
-  parser.add_argument('--xtrans', dest="xtrans", action="store_true")
 
   # Model
+  parser.add_argument('--xtrans', dest="xtrans", action="store_true")
+  parser.add_argument('--green_only', dest="green_only", action="store_true")
+  parser.add_argument('--linear', dest="linear", action="store_true")
   parser.add_argument(
       '--params', nargs="*", default=["model=BayerNetwork"])
 
-  parser.set_defaults(debug=False, fix_seed=False, xtrans=False)
+  parser.set_defaults(debug=False, fix_seed=False, xtrans=False, green_only=False, linear=False)
 
   args = parser.parse_args()
 

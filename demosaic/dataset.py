@@ -29,24 +29,38 @@ class SRGB2Linear(object):
                     im / self.scale,
                     np.power((im + self.a) / (1 + self.a), self.gamma))
 
+class Linear2SRGB(object):
+  def __init__(self):
+    super(Linear2SRGB, self).__init__()
+    self.a = 0.055
+    self.thresh = 0.0031308049535603713
+    self.scale = 12.92
+    self.gamma = 2.4
+
+  def __call__(self, im):
+    return th.where(im <= self.thresh,
+                    im * self.scale,
+                    (1 + self.a)*th.pow(th.clamp(im, self.thresh), 1.0 / self.gamma) - self.a)
+
 def bayer_mosaic(im):
   """GRBG Bayer mosaic."""
 
   mos = np.copy(im)
+  mask = np.ones_like(im)
 
   # red
-  mos[0, ::2, 0::2] = 0
-  mos[0, 1::2, :] = 0
+  mask[0, ::2, 0::2] = 0
+  mask[0, 1::2, :] = 0
 
   # green
-  mos[1, ::2, 1::2] = 0
-  mos[1, 1::2, ::2] = 0
+  mask[1, ::2, 1::2] = 0
+  mask[1, 1::2, ::2] = 0
 
   # blue
-  mos[2, 0::2, :] = 0
-  mos[2, 1::2, 1::2] = 0
+  mask[2, 0::2, :] = 0
+  mask[2, 1::2, 1::2] = 0
 
-  return mos
+  return mos*mask, mask
 
 def xtrans_mosaic(im):
   """XTrans Mosaick.
@@ -67,7 +81,8 @@ def xtrans_mosaic(im):
            (5,0), (5,2), (5,3), (5,5)]
   r_pos = [(0,4), 
            (1,0), (1,2), 
-           (2,4), (3,1), 
+           (2,4), 
+           (3,1), 
            (4,3), (4,5), 
            (5,1)]
   b_pos = [(0,1), 
@@ -92,13 +107,13 @@ def xtrans_mosaic(im):
   mask = np.tile(mask, [1, np.ceil(h / 6).astype(np.int32), np.ceil(w / 6).astype(np.int32)])
   mask = mask[:, :h, :w]
 
-  return mask*mos
+  return mask*mos, mask
 
 
 
 class DemosaicDataset(Dataset):
   def __init__(self, filelist, add_noise=False, max_noise=0.1, transform=None, 
-               augment=False):
+               augment=False, linearize=False):
     self.transform = transform
 
     self.add_noise = add_noise
@@ -106,7 +121,10 @@ class DemosaicDataset(Dataset):
 
     self.augment = augment
 
-    self.linearizer = SRGB2Linear()
+    if linearize:
+      self.linearizer = SRGB2Linear()
+    else:
+      self.linearizer = None
 
     if not os.path.splitext(filelist)[-1] == ".txt":
       raise ValueError("Dataset should be speficied as a .txt file")
@@ -131,7 +149,9 @@ class DemosaicDataset(Dataset):
     # read image
     im = skio.imread(impath).astype(np.float32) / 255.0
 
-    # im = self.linearizer(im)
+    # Jitter the quantized values
+    im += np.random.normal(0, 0.005, size=im.shape)
+    im = np.clip(im, 0, 1)
 
     if self.augment:
       if np.random.uniform() < 0.5:
@@ -143,17 +163,28 @@ class DemosaicDataset(Dataset):
 
       # Pixel shift
       if np.random.uniform() < 0.5:
+        shift_y = np.random.randint(0, 6)  # cover both xtrans and bayer
         im = np.roll(im, 1, 0)
       if np.random.uniform() < 0.5:
+        shift_x = np.random.randint(0, 6)
         im = np.roll(im, 1, 1)
 
+      # Random Hue/Sat
       if np.random.uniform() < 0.5:
         shift = np.random.uniform(-0.1, 0.1)
+        sat = np.random.uniform(0.8, 1.2)
         im = rgb2hsv(im)
         im[:, :, 0] = np.mod(im[:, :, 0] + shift, 1)
+        im[:, :, 1] *= sat
         im = hsv2rgb(im)
 
-      # Randomize exposure
+      im = np.clip(im, 0, 1)
+
+    if self.linearizer is not None:
+      im = self.linearizer(im)
+
+    # Randomize exposure
+    if self.augment:
       if np.random.uniform() < 0.5:
         im *= np.random.uniform(0.5, 1.2)
 
@@ -163,19 +194,25 @@ class DemosaicDataset(Dataset):
 
     im = np.transpose(im, [2, 1, 0])
 
-    # add noise
-    std = 0
-    if self.add_noise:
-      std = np.random.uniform(0, self.max_noise)
-      im += np.random.normal(0, std, size=im.shape)
-      im = np.clip(im, 0, 1)
+    # crop boundaries to ignore shift
+    c = 8
+    im = im[:, c:-c, c:-c]
 
     # apply mosaic
-    mosaic = self.make_mosaic(im)
+    mosaic, mask = self.make_mosaic(im)
+
+    # TODO: separate GT/noisy
+    # # add noise
+    # std = 0
+    # if self.add_noise:
+    #   std = np.random.uniform(0, self.max_noise)
+    #   im += np.random.normal(0, std, size=im.shape)
+    #   im = np.clip(im, 0, 1)
 
     sample = {
         "mosaic": mosaic,
-        "noise_variance": np.array([std]),
+        "mask": mask,
+        # "noise_variance": np.array([std]),
         "target": im,
         }
 
@@ -204,6 +241,12 @@ class ToTensor(object):
     for k in sample.keys():
       if type(sample[k]) == np.ndarray:
         sample[k] = th.from_numpy(sample[k])
+    return sample
+
+class GreenOnly(object):
+  def __call__(self, sample):
+    sample["target"][0] = 0
+    sample["target"][2] = 0
     return sample
 
 

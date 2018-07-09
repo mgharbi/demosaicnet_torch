@@ -36,7 +36,7 @@ class PSNR(nn.Module):
 
   def forward(self, data, output):
     target = crop_like(data["target"], output)
-    mse = self.mse(output, target)
+    mse = self.mse(output, target) + 1e-12
     return -10 * th.log(mse) / np.log(10)
 
 

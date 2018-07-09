@@ -106,14 +106,18 @@ def main(args):
     dst_path = os.path.join(args.output, path.replace(".tif", "_"+name+"_.png"))
     skio.imsave(dst_path, out)
 
-    r_kernels /= r_kernels.abs().max()
-    r_kernels *= 0.5
-    r_kernels += 0.5
     # r_kernels = th.clip(r_kernels, 0, 1)
     r_kernels = r_kernels.cpu().numpy()
 
-    dst_path = os.path.join(args.output, path.replace(".tif", "_kernels.png"))
-    skio.imsave(dst_path, r_kernels)
+    for c in range(3):
+      k_copy = np.copy(r_kernels[:, :, c])
+      k_copy /= np.abs(k_copy).max()
+      k_copy *= 0.5
+      k_copy += 0.5
+      k_copy = np.dstack([k_copy]*3)
+
+      dst_path = os.path.join(args.output, path.replace(".tif", "_kernels_{}.png".format(c)))
+      skio.imsave(dst_path, k_copy)
 
 
 if __name__ == "__main__":

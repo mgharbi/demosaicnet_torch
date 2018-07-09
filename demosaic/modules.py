@@ -15,6 +15,8 @@ from torchlib.modules import ConvChain
 from torchlib.image import crop_like
 import torchlib.viz as viz
 
+from demosaic.dataset import Linear2SRGB
+
 
 def apply_kernels(kernel, noisy_data):
   kh, kw = kernel.shape[2:]
@@ -54,6 +56,29 @@ def get(params):
   if model_name is None:
     raise ValueError("model has not been specified!")
   return getattr(sys.modules[__name__], model_name)(**params)
+
+class GreenOnly(nn.Module):
+  def __init__(self, mdl):
+    super(GreenOnly, self).__init__()
+    self.mdl = mdl
+
+  def forward(self, samples):
+    output = self.mdl(samples)
+    output[:, 0] = 0
+    output[:, 2] = 0
+    return output
+
+class DeLinearize(nn.Module):
+  def __init__(self, mdl):
+    super(DeLinearize, self).__init__()
+    self.mdl = mdl
+    self.linear2srgb = Linear2SRGB()
+
+  def forward(self, samples):
+    output = self.mdl(samples)
+    samples["target"] = self.linear2srgb(samples["target"])
+    output = self.linear2srgb(output)
+    return output
 
 
 class BayerNetwork(nn.Module):
@@ -519,15 +544,17 @@ class BayerKP(nn.Module):
 
 class SimpleKP(nn.Module):
   """2018-07-03: kernel-predicting Bayer"""
-  def __init__(self, ksize=5, convs=1, levels=3, width=32, mosaic_period=2):
+  def __init__(self, ksize=5, convs=1, levels=3, width=32, mosaic_period=2,
+               normalize=False, activation="leaky_relu"):
 
     super(SimpleKP, self).__init__()
 
     self.ksize = ksize
+    self.normalize = normalize
 
     self.kernels = Autoencoder(3, 3*ksize*ksize, width=width, increase_factor=1.4,
-        num_levels=levels, num_convs=convs, activation="leaky_relu",
-        normalization_type="instance", normalize=True)
+        num_levels=levels, num_convs=convs, activation=activation,
+        normalization_type="instance", normalize=normalize, output_type='linear')
 
     self.period = mosaic_period
 
@@ -538,14 +565,13 @@ class SimpleKP(nn.Module):
     gray_mosaic = mosaic.sum(1, keepdim=True)
     bs, _, h, w = gray_mosaic.shape
 
-    x = th.fmod(th.arange(0, w).float().cuda(), 2).view(1, 1, 1, w).repeat(bs, 1, h, 1)
-    y = th.fmod(th.arange(0, h).float().cuda(), 2).view(1, 1, h, 1).repeat(bs, 1, 1, w)
+    x = th.fmod(th.arange(0, w).float().cuda(), self.period).view(1, 1, 1, w).repeat(bs, 1, h, 1)
+    y = th.fmod(th.arange(0, h).float().cuda(), self.period).view(1, 1, h, 1).repeat(bs, 1, 1, w)
 
     indata = th.cat([gray_mosaic, x, y], 1)
 
     kernels = self.kernels(indata)
     bs, _, h, w = kernels.shape
-
 
     idx = 0
     ksize = self.ksize

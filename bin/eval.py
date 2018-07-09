@@ -41,9 +41,13 @@ def main(args):
   log.info("Model configuration: {}".format(meta_params["model"]))
 
   if args.pretrained is not None:
-    model_ref = modules.get({"model": "BayerNetwork"})
-    log.info("Loading Caffe weights")
-    cvt = converter.Converter(args.pretrained, "BayerNetwork")
+    if args.xtrans:
+      model_ref = modules.get({"model": "XtransNetwork"})
+      cvt = converter.Converter(args.pretrained, "XtransNetwork")
+    else:
+      model_ref = modules.get({"model": "BayerNetwork"})
+      log.info("Loading Caffe weights")
+      cvt = converter.Converter(args.pretrained, "BayerNetwork")
     cvt.convert(model_ref)
     for p in model_ref.parameters():
       p.requires_grad = False
@@ -69,7 +73,10 @@ def main(args):
     # im = im[:3000, :3000]
     im /= 2**16
     im = np.stack([im]*3, 0)
-    im = dset.bayer_mosaic(im)
+    if args.xtrans:
+      im = dset.bayer_mosaic(im)
+    else:
+      im = dset.xtrans_mosaic(im)
     im = np.expand_dims(im, 0)
     im = th.from_numpy(im).cuda()
 
@@ -83,17 +90,31 @@ def main(args):
     tot_time = 0
     tot_time_ref = 0
 
-    for start_x in range(0, w, args.tile_step):
+    if args.xtrans:
+      mod = 6
+    else:
+      mod = 2
+
+    tile_step = args.tile_step - (args.tile_step % mod)
+    tile_step = args.tile_step - (args.tile_step % mod)
+
+    for start_x in range(0, w, tile_step):
       end_x = start_x + tile_size
       if end_x > w:
-        end_x = w - (w % 2)  # keep parity
+        # keep mosaic period
+        end_x = w
         start_x = end_x - tile_size
-      for start_y in range(0, h, args.tile_step):
+        start_x = start_x - (start_x % mod)
+        end_x = start_x + tile_size
+      for start_y in range(0, h, tile_step):
         end_y = start_y + tile_size
         if end_y > h:
-          end_y = h - (h % 2)  # keep parity
+          end_y = h
           start_y = end_y - tile_size
+          start_y = start_y - (start_y % mod)
+          end_y = start_y + tile_size
 
+        print(start_x, start_y)
         sample = {"mosaic": im[:, :, start_y:end_y, start_x:end_x]}
 
         th.cuda.synchronize()
@@ -150,7 +171,9 @@ if __name__ == "__main__":
   # Monitoring
   parser.add_argument('--debug', dest="debug", action="store_true")
 
-  parser.set_defaults(debug=False, fix_seed=False)
+  parser.add_argument('--xtrans', dest="xtrans", action="store_true")
+
+  parser.set_defaults(debug=False, fix_seed=False, xtrans=False)
 
   args = parser.parse_args()
 

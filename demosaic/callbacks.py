@@ -52,7 +52,7 @@ class DemosaicVizCallback(callbacks.Callback):
       eps = 1e-8
       mosaic = batch_v["mosaic"].data
       target = batch_v["target"].data
-      noise_variance = batch_v["noise_variance"].data
+      # noise_variance = batch_v["noise_variance"].data
       output = output.data
       output_ref = output_ref.data
       target = crop_like(target, output)
