@@ -51,9 +51,27 @@ train_simple_kp_xtrans_no_norm:
 
 train_simple_kp_xtrans_large_go:
 	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/train/filelist.txt output/simple_kp_xtrans_large_go \
-		--params model=SimpleKP mosaic_period=6 ksize=15 width=64 activation=relu --loss l2 \
+		--params model=SimpleKP mosaic_period=6 convs=2 ksize=15 width=64 activation=relu --loss l2 \
+		--pretrained pretrained_models/xtrans --xtrans --green_only --subsample\
+		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-4
+
+train_idkp_xtrans_go:
+	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/train/filelist.txt output/idkp_xtrans_go \
+		--params model=IndependentKP period=6 --loss l2 \
 		--pretrained pretrained_models/xtrans --xtrans --green_only \
 		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-4
+
+train_idkp_bayer_go:
+	CUDA_VISIBLE_DEVICES=0 python bin/train.py data/images/train/filelist.txt output/idkp_bayer_go \
+		--params model=IndependentKP period=2 --loss l2 \
+		--pretrained pretrained_models/bayer --green_only \
+		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-4
+
+train_ck_bayer_go:
+	CUDA_VISIBLE_DEVICES=0 python bin/train.py data/images/train/filelist.txt output/ck_bayer_go \
+		--params model=ClassifierKernels period=2 --loss l2 \
+		--pretrained pretrained_models/bayer --green_only --subsample \
+		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-3
 
 train_demo:
 	python bin/train.py demo_data/filelist.txt output/bayer \

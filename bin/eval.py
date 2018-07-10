@@ -80,6 +80,7 @@ def main(args):
     im = np.expand_dims(im, 0)
     im = th.from_numpy(im).cuda()
 
+    import ipdb; ipdb.set_trace()
     _, _, h, w = im.shape
 
     out_im = th.zeros(3, h, w).cuda()

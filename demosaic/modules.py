@@ -17,6 +17,8 @@ import torchlib.viz as viz
 
 from demosaic.dataset import Linear2SRGB
 
+import torchlib.debug as D
+
 
 def apply_kernels(kernel, noisy_data):
   kh, kw = kernel.shape[2:]
@@ -66,6 +68,31 @@ class GreenOnly(nn.Module):
     output = self.mdl(samples)
     output[:, 0] = 0
     output[:, 2] = 0
+    return output
+
+class Subsample(nn.Module):
+  def __init__(self, mdl, period, dx=0, dy=0):
+    super(Subsample, self).__init__()
+    self.mdl = mdl
+    self.period = period
+    self.dx = dx
+    self.dy = dy
+
+  def mask_out(self, arr, start):
+    mask = th.zeros_like(arr)
+    mask[..., start+self.dy::self.period, start+self.dx::self.period] = 1
+    return arr*mask
+
+  def forward(self, samples):
+    output = self.mdl(samples)
+
+    oh = output.shape[-2]
+    h = samples["target"].shape[-2]
+
+    start = (self.period-((h-oh) //2)) % self.period
+    output = self.mask_out(output, start)
+    samples["target"] = self.mask_out(samples["target"], 0)
+
     return output
 
 class DeLinearize(nn.Module):
@@ -552,7 +579,7 @@ class SimpleKP(nn.Module):
     self.ksize = ksize
     self.normalize = normalize
 
-    self.kernels = Autoencoder(3, 3*ksize*ksize, width=width, increase_factor=1.4,
+    self.kernels = Autoencoder(6, 3*ksize*ksize, width=width, increase_factor=1.4,
         num_levels=levels, num_convs=convs, activation=activation,
         normalization_type="instance", normalize=normalize, output_type='linear')
 
@@ -562,13 +589,14 @@ class SimpleKP(nn.Module):
     start = time.time()
 
     mosaic = samples["mosaic"]
+    mask = samples["mask"]
     gray_mosaic = mosaic.sum(1, keepdim=True)
     bs, _, h, w = gray_mosaic.shape
 
     x = th.fmod(th.arange(0, w).float().cuda(), self.period).view(1, 1, 1, w).repeat(bs, 1, h, 1)
     y = th.fmod(th.arange(0, h).float().cuda(), self.period).view(1, 1, h, 1).repeat(bs, 1, 1, w)
 
-    indata = th.cat([gray_mosaic, x, y], 1)
+    indata = th.cat([gray_mosaic, mask, x, y], 1)
 
     kernels = self.kernels(indata)
     bs, _, h, w = kernels.shape
@@ -590,3 +618,199 @@ class SimpleKP(nn.Module):
 
     return output
 
+class IndependentKP(nn.Module):
+  """
+  2018-07-09
+  """
+  def __init__(self, ksize=3, width=64, period=2):
+
+    super(IndependentKP, self).__init__()
+
+    self.ksize = ksize
+    self.period = period
+    self.knowns = period*period
+    self.unknowns = 2*period*period
+
+    for c in range(self.unknowns):
+      net = nn.Sequential(
+        nn.Conv2d(self.knowns, width, 3),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, width, 3),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, ksize*ksize*self.knowns, 1),
+      )
+      self.add_module(self.get_name(c), net)
+
+  def get_name(self, c):
+    return "subnet_{:02d}".format(c)
+
+
+  def forward(self, samples, kernel_list=None):
+    start = time.time()
+
+    mosaic = samples["mosaic"]
+    mask = samples["mask"]
+    gray_mosaic = mosaic.sum(1, keepdim=True)
+    bs, _, h, w = gray_mosaic.shape
+
+    color_samples = gray_mosaic.unfold(
+      3, self.period, self.period).unfold(2, self.period, self.period)
+    h2, w2 = color_samples.shape[2:4]
+    color_samples = color_samples.contiguous().view(
+      bs, h2, w2, self.period*self.period).permute(0, 3, 1, 2).contiguous()
+
+    ksize = self.ksize
+    chans = []
+    for c in range(self.unknowns):
+      m = self._modules[self.get_name(c)]
+      kernels = m(color_samples)
+      bs, _, h, w = kernels.shape
+      chans.append(self.apply_kernels(kernels, color_samples))
+    recons = th.cat(chans, 1)
+    h, w= recons.shape[-2:]
+
+    period = self.period
+    recons = recons.view(bs, 2, period, period, h, w)
+    recons = recons.permute(0, 1, 4, 2, 5, 3).contiguous().view(bs, 2, h*period, w*period)
+
+    output = th.cat([recons, th.zeros_like(recons)], 1)[:, :3]
+
+    return output
+
+  def apply_kernels(self, kernel, noisy_data):
+    kh, kw = kernel.shape[2:]
+
+    bs, ci, h, w = noisy_data.shape
+    ksize = self.ksize
+
+    # Crop kernel and input so their sizes match
+    needed = kh + ksize - 1
+    if needed > h:
+      crop = (needed - h) // 2
+      if crop > 0:
+        kernel = kernel[:, :, crop:-crop, crop:-crop]
+      kh, kw = kernel.shape[2:]
+    else:
+      crop = (h - needed) // 2
+      if crop > 0:
+        noisy_data = noisy_data[:, :, crop:-crop, crop:-crop]
+
+    # -------------------------------------------------------------------------
+    # Split the input buffer in tiles matching the kernels
+    tiles = noisy_data.unfold(2, ksize, 1).unfold(3, ksize, 1)
+    tiles = tiles.contiguous().view(bs, ci, kh, kw, ksize*ksize)
+
+    # Vectorize the kernel tiles
+    kernel = kernel.view(bs, self.knowns, ksize*ksize, kh, kw)
+    kernel = kernel.permute(0, 1, 3, 4, 2).contiguous()
+    # kernel = kernel.view(bs, 1, kh, kw, ksize*ksize)
+    # -------------------------------------------------------------------------
+    weighted_sum = th.sum(th.sum(kernel*tiles, dim=4), dim=1, keepdim=True)
+
+    return weighted_sum
+
+
+class ClassifierKernels(nn.Module):
+  """
+  2018-07-10
+  """
+
+  def __init__(self, ksize=5, nkernels=8, width=32, period=2):
+
+    super(ClassifierKernels, self).__init__()
+
+    self.ksize = ksize
+    self.period = period
+    # self.knowns = period*period
+    # self.unknowns = 2*period*period
+    self.nkernels = nkernels
+
+    self.net = nn.Sequential(
+      nn.Conv2d(5, width, 3),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, width, 3),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, nkernels, 1),
+    )
+
+    self.kernels = nn.Parameter(th.randn(2, nkernels, ksize*ksize))
+
+  def forward(self, samples, kernel_list=None):
+    start = time.time()
+
+    mosaic = samples["mosaic"]
+    mask = samples["mask"]
+    gray_mosaic = mosaic.sum(1, keepdim=True)
+    bs, _, h, w = gray_mosaic.shape
+
+    x = th.fmod(th.arange(0, w).float().cuda(), self.period).view(1, 1, 1, w).repeat(bs, 1, h, 1)
+    y = th.fmod(th.arange(0, h).float().cuda(), self.period).view(1, 1, h, 1).repeat(bs, 1, 1, w)
+
+    indata = th.cat([mosaic, x, y], 1)
+    weights = self.net(indata)
+    weights = F.softmax(weights, 1)
+
+    recons = self.apply_kernels(weights, gray_mosaic.squeeze(1))
+
+    h, w = recons.shape[-2:]
+
+    green = recons.new()
+    green.resize_(bs, 1, h, w)
+    green.zero_()
+
+    x = crop_like(x, green)
+    y = crop_like(y, green)
+    gray_mosaic = crop_like(gray_mosaic, green)
+
+    r0 = recons[:, 0:1]
+    r1 = recons[:, 1:2]
+    
+    mask = (x == 1) & (y == 0)
+    green[mask] = r0[mask]
+
+    mask = (x == 0) & (y == 1)
+    green[mask] = r1[mask]
+
+    green[x == y] = gray_mosaic[x == y] 
+
+    red = th.zeros_like(green)
+    blue = th.zeros_like(green)
+
+    output = th.cat([red, green, blue], 1)
+
+    # kview = self.kernels.view(2*self.nkernels, 1, self.ksize, self.ksize)
+    # D.tensor(kview)
+
+    return output
+
+  def apply_kernels(self, weights, noisy_data):
+    kh, kw = weights.shape[2:]
+
+    bs, h, w = noisy_data.shape
+    ksize = self.ksize
+
+    # Crop weights and input so their sizes match
+    needed = kh + ksize - 1
+    if needed > h:
+      crop = (needed - h) // 2
+      if crop > 0:
+        weights = weights[..., crop:-crop, crop:-crop]
+      kh, kw = weights.shape[2:]
+    else:
+      crop = (h - needed) // 2
+      if crop > 0:
+        noisy_data = noisy_data[..., crop:-crop, crop:-crop]
+
+    # Split the input buffer in tiles matching the kernels
+    tiles = noisy_data.unfold(1, ksize, 1).unfold(2, ksize, 1)
+    tiles = tiles.contiguous().view(bs, 1, 1, kh, kw, ksize*ksize)
+
+    kernels = self.kernels.unsqueeze(0).unsqueeze(3).unsqueeze(4)
+    weights = weights.unsqueeze(4).unsqueeze(1)
+
+    weighted_kernels = kernels*weights
+
+    # sum over kernel extent
+    prod = (tiles*weighted_kernels).sum(2).sum(4)
+
+    return prod

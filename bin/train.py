@@ -70,6 +70,16 @@ def main(args, model_params):
     model = modules.GreenOnly(model)
     model_ref = modules.GreenOnly(model_ref)
 
+  if args.subsample:
+    dx = 1
+    dy = 0
+    if args.xtrans:
+      period = 6
+    else:
+      period = 2
+    model = modules.Subsample(model, period, dx=dx, dy=dy)
+    model_ref = modules.Subsample(model_ref, period, dx=dx, dy=dy)
+
   if args.linear:
     model = modules.DeLinearize(model)
     model_ref = modules.DeLinearize(model_ref)
@@ -129,11 +139,13 @@ if __name__ == "__main__":
   # Model
   parser.add_argument('--xtrans', dest="xtrans", action="store_true")
   parser.add_argument('--green_only', dest="green_only", action="store_true")
+  parser.add_argument('--subsample', dest="subsample", action="store_true")
   parser.add_argument('--linear', dest="linear", action="store_true")
   parser.add_argument(
       '--params', nargs="*", default=["model=BayerNetwork"])
 
-  parser.set_defaults(debug=False, fix_seed=False, xtrans=False, green_only=False, linear=False)
+  parser.set_defaults(debug=False, fix_seed=False, xtrans=False,
+                      green_only=False, subsample=False, linear=False)
 
   args = parser.parse_args()
 
