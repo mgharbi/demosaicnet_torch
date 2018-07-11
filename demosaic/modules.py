@@ -715,7 +715,7 @@ class ClassifierKernels(nn.Module):
   2018-07-10
   """
 
-  def __init__(self, ksize=5, nkernels=8, width=32, period=2):
+  def __init__(self, ksize=3, nkernels=8, width=32, period=2):
 
     super(ClassifierKernels, self).__init__()
 
@@ -730,13 +730,29 @@ class ClassifierKernels(nn.Module):
       nn.ReLU(inplace=True),
       nn.Conv2d(width, width, 3),
       nn.ReLU(inplace=True),
+      nn.Conv2d(width, width, 3),
+      nn.ReLU(inplace=True),
       nn.Conv2d(width, nkernels, 1),
     )
 
-    self.kernels = nn.Parameter(th.randn(2, nkernels, ksize*ksize))
+    # for p in self.net.parameters():
+    #   p.requires_grad = False
+
+    self.kernels = nn.Parameter(2*th.rand(2, nkernels, ksize*ksize) - 1)
+
+    self.t = 0
+    self.temperature = 1
+
+    # self.kviz = viz.BatchVisualizer("kernels", env="ck_bayer_go")
+    # self.wviz = viz.ScalarVisualizer("weights", env="ck_bayer_go", opts={"legend": ["min", "max"]})
+    # self.wmapviz = viz.BatchVisualizer("weightmaps", env="ck_bayer_go")
 
   def forward(self, samples, kernel_list=None):
     start = time.time()
+
+    self.t += 1
+
+    # self.temperature *= 1.0001
 
     mosaic = samples["mosaic"]
     mask = samples["mask"]
@@ -748,6 +764,8 @@ class ClassifierKernels(nn.Module):
 
     indata = th.cat([mosaic, x, y], 1)
     weights = self.net(indata)
+
+    # print(self.temperature)
     weights = F.softmax(weights, 1)
 
     recons = self.apply_kernels(weights, gray_mosaic.squeeze(1))
@@ -768,18 +786,33 @@ class ClassifierKernels(nn.Module):
     mask = (x == 1) & (y == 0)
     green[mask] = r0[mask]
 
-    mask = (x == 0) & (y == 1)
-    green[mask] = r1[mask]
-
-    green[x == y] = gray_mosaic[x == y] 
+    # mask = (x == 0) & (y == 1)
+    # green[mask] = r1[mask]
+    #
+    # green[x == y] = gray_mosaic[x == y] 
 
     red = th.zeros_like(green)
     blue = th.zeros_like(green)
 
     output = th.cat([red, green, blue], 1)
 
-    # kview = self.kernels.view(2*self.nkernels, 1, self.ksize, self.ksize)
-    # D.tensor(kview)
+    # if self.t % 100 == 0:
+    #   self.wviz.update(self.t, weights.min().item(), name="min")
+    #   self.wviz.update(self.t, weights.max().item(), name="max")
+    #
+    #   kview = self.kernels.view(2*self.nkernels, 1, self.ksize, self.ksize).detach()
+    #   mu = kview.mean().item()
+    #   std = kview.std().item()
+    #   kview = th.clamp(((kview-mu) / (2*std) + 1.0) / 2.0, 0, 1)
+    #   self.kviz.update(kview.cpu(), caption="{:.5f} ({:.5f})".format(mu, std))
+    #
+    #
+    #   bs, c, h, w = weights.shape
+    #   wview = weights.view(bs*c, 1, h, w).detach()
+    #   mu = wview.mean().item()
+    #   std = wview.std().item()
+    #   wview = th.clamp(((wview-mu) / (2*std) + 1.0) / 2.0, 0, 1)
+    #   self.wmapviz.update(wview.cpu(), caption="{:.5f} ({:.5f})".format(mu, std))
 
     return output
 
@@ -805,7 +838,9 @@ class ClassifierKernels(nn.Module):
     tiles = noisy_data.unfold(1, ksize, 1).unfold(2, ksize, 1)
     tiles = tiles.contiguous().view(bs, 1, 1, kh, kw, ksize*ksize)
 
-    kernels = self.kernels.unsqueeze(0).unsqueeze(3).unsqueeze(4)
+    kernels = self.kernels
+    # kernels = self.kernels / (self.kernels.abs().max(2, keepdim=True)[0] + 1e-8)
+    kernels = kernels.unsqueeze(0).unsqueeze(3).unsqueeze(4)
     weights = weights.unsqueeze(4).unsqueeze(1)
 
     weighted_kernels = kernels*weights
@@ -813,4 +848,232 @@ class ClassifierKernels(nn.Module):
     # sum over kernel extent
     prod = (tiles*weighted_kernels).sum(2).sum(4)
 
+    # weights.register_hook(lambda g: print("weights_grad", g.abs().max().item()))
+    # kernels.register_hook(lambda g: print("kernels_grad", g.abs().max().item()))
+
     return prod
+
+
+class TranslationInvariantClassifierKernels(nn.Module):
+  """
+  2018-07-11
+  """
+
+  def __init__(self, ksize=3, nkernels=8, width=32, period=2):
+
+    super(TranslationInvariantClassifierKernels, self).__init__()
+
+    self.ksize = ksize
+    self.period = period
+    self.nkernels = nkernels
+
+    self.g0 = nn.Sequential(
+      nn.Conv2d(self.period**2, width, 3),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, width, 1),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, width, 1),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, nkernels, 1),
+    )
+
+    self.g1 = nn.Sequential(
+      nn.Conv2d(self.period**2, width, 3),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, width, 1),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, width, 1),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(width, nkernels, 1),
+    )
+
+    self.kernels = nn.Parameter(2*th.rand(2, nkernels, ksize*ksize*self.period**2) - 1)
+
+    self.upsampler = nn.Upsample(scale_factor=2, mode='nearest')
+
+    self.t = 0
+
+  def forward(self, samples, kernel_list=None):
+    start = time.time()
+
+    self.t += 1
+
+    mosaic = samples["mosaic"]
+    mask = samples["mask"]
+    gray_mosaic = mosaic.sum(1, keepdim=True)
+    bs, _, h, w = gray_mosaic.shape
+
+    x = th.fmod(th.arange(0, w).float().cuda(), self.period).view(1, 1, 1, w).repeat(bs, 1, h, 1)
+    y = th.fmod(th.arange(0, h).float().cuda(), self.period).view(1, 1, h, 1).repeat(bs, 1, 1, w)
+
+    color_samples = gray_mosaic.squeeze(1).unfold(2, 2, self.period).unfold(1, 2, self.period)
+    color_samples = color_samples.permute(0, 3, 4, 1, 2)
+    bs, _, _, h, w = color_samples.shape
+    color_samples = color_samples.contiguous().view(bs, self.period**2, h, w)
+
+    weights0 = self.g0(color_samples)
+    weights0 = F.softmax(weights0, 1)
+    r0 = self.apply_kernels(weights0, self.kernels[0], color_samples)
+    r0 = self.upsampler(r0)
+
+    weights1 = self.g1(color_samples)
+    weights1 = F.softmax(weights1, 1)
+    r1 = self.apply_kernels(weights1, self.kernels[1], color_samples)
+    r1 = self.upsampler(r1)
+
+    h, w = r0.shape[-2:]
+
+    green = r0.new()
+    green.resize_(bs, 1, h, w)
+    green.zero_()
+
+    x = crop_like(x, green)
+    y = crop_like(y, green)
+    gray_mosaic = crop_like(gray_mosaic, green)
+
+    mask = (x == 1) & (y == 0)
+    green[mask] = r0[mask]
+
+    mask = (x == 0) & (y == 1)
+    green[mask] = r1[mask]
+
+    green[x == y] = gray_mosaic[x == y] 
+
+    red = th.zeros_like(green)
+    blue = th.zeros_like(green)
+
+    output = th.cat([red, green, blue], 1)
+
+    return output
+
+  def apply_kernels(self, weights, kernels, noisy_data):
+    kh, kw = weights.shape[2:]
+
+    bs, ci, h, w = noisy_data.shape
+    ksize = self.ksize
+
+    # Crop weights and input so their sizes match
+    needed = kh + ksize - 1
+    if needed > h:
+      crop = (needed - h) // 2
+      if crop > 0:
+        weights = weights[..., crop:-crop, crop:-crop]
+      kh, kw = weights.shape[2:]
+    else:
+      crop = (h - needed) // 2
+      if crop > 0:
+        noisy_data = noisy_data[..., crop:-crop, crop:-crop]
+
+    # Split the input buffer in tiles matching the kernels
+    tiles = noisy_data.unfold(2, ksize, 1).unfold(3, ksize, 1)
+    tiles = tiles.contiguous().view(bs, ci, 1, kh, kw, ksize*ksize)
+    tiles = tiles.permute(0, 2, 3, 4, 5, 1).contiguous().view(bs, 1, kh, kw, ksize*ksize*ci)
+
+    # kernels = self.kernels / (self.kernels.abs().max(2, keepdim=True)[0] + 1e-8)
+    kernels = kernels.unsqueeze(0).unsqueeze(2).unsqueeze(3)
+    weights = weights.unsqueeze(4)
+
+    weighted_kernels = kernels*weights
+
+    # sum over kernel extent
+    prod = (tiles*weighted_kernels).sum(1).sum(3).unsqueeze(1)
+
+    # weights.register_hook(lambda g: print("weights_grad", g.abs().max().item()))
+    # kernels.register_hook(lambda g: print("kernels_grad", g.abs().max().item()))
+
+    return prod
+
+
+class NeighborhoodNet(nn.Module):
+  """
+  2018-07-11
+  """
+
+  def __init__(self, ksize=3, width=32, period=2):
+
+    super(NeighborhoodNet, self).__init__()
+
+    self.ksize = ksize
+    self.period = period
+
+    self.net0 = nn.Sequential(
+      nn.Linear(self.ksize**2, width),
+      nn.ReLU(inplace=True),
+      nn.Linear(width, width),
+      nn.ReLU(inplace=True),
+      nn.Linear(width, width),
+      nn.ReLU(inplace=True),
+      nn.Linear(width, 1),
+    )
+
+    self.net1 = nn.Sequential(
+      nn.Linear(self.ksize**2, width),
+      nn.ReLU(inplace=True),
+      nn.Linear(width, width),
+      nn.ReLU(inplace=True),
+      nn.Linear(width, width),
+      nn.ReLU(inplace=True),
+      nn.Linear(width, 1),
+    )
+
+    self.t = 0
+
+  def to_patches(self, arr):
+    patches = arr.unfold(2, self.ksize, 1).unfold(3, self.ksize, 1)
+    # bs, c, h, w, _, _ = patches.shape
+    # patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous()
+    # patches = patches.view(bs*h*w, c, self.ksize, self.ksize)
+    return patches
+
+  def forward(self, samples, kernel_list=None):
+    start = time.time()
+
+    self.t += 1
+
+    mosaic = samples["mosaic"]
+    mask = samples["mask"]
+    # gray_mosaic = mosaic.sum(1, keepdim=True)
+    bs, _, h, w = mosaic.shape
+
+    # keep input samples
+    output = mosaic.clone()
+
+    patches = self.to_patches(mosaic)
+
+    offset = (self.ksize // 2 )
+
+    for site in range(2):
+      # predict at red location
+      if offset % self.period == 1:
+        dx = 1
+        dy = 0
+      else:
+        dx = 0
+        dy = 1
+
+      if site == 1:
+        dx = 1 - dx
+        dy = 1 - dy
+
+      # patches centered on red
+      p = patches[:, :, dy::self.period, dx::self.period, ...]
+      h2, w2 = p.shape[2:4]
+      p = p.permute(0, 2, 3, 1, 4, 5).contiguous()
+      p = p.view(bs*h2*w2, 3, self.ksize, self.ksize)
+
+      # import torchlib.debug as D
+      # D.tensor(p)
+
+      p = p.sum(1).view(bs*h2*w2, self.ksize**2)
+      means = p.mean(-1, keepdim=True)
+      std = p.std(-1, keepdim=True)
+
+      eps = 1e-4
+      p = (p-means) / (std + eps)
+
+      green = self._modules["net{}".format(site)](p) * (std + eps) + means
+      green = green.view(bs, 1, h2, w2)
+
+      output[:, :, dy:2*h2:self.period, dx:2*w2:self.period] = green
+
+    return output

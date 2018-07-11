@@ -25,7 +25,7 @@ class DemosaicVizCallback(callbacks.Callback):
     self.period = period
     self.counter = 0
 
-    self.psnr = losses.PSNR()
+    self.psnr = losses.PSNR(crop=8)
 
   # def on_epoch_end(self, epoch, logs):
   def on_batch_end(self, batch, batch_id, num_batches, logs):

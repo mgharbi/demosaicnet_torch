@@ -93,7 +93,7 @@ def main(args, model_params):
       ]
 
   metrics = {
-      "psnr": losses.PSNR()
+      "psnr": losses.PSNR(crop=8)
       }
 
   log.info("Using {} loss".format(args.loss))

@@ -30,12 +30,17 @@ class L2Loss(nn.Module):
 
 class PSNR(nn.Module):
   """ """
-  def __init__(self):
+  def __init__(self, crop=0):
     super(PSNR, self).__init__()
+    self.crop = crop
     self.mse = nn.MSELoss()
 
   def forward(self, data, output):
     target = crop_like(data["target"], output)
+    crop = self.crop
+    if crop > 0:
+      output = output[..., crop:-crop, crop:-crop]
+      target = target[..., crop:-crop, crop:-crop]
     mse = self.mse(output, target) + 1e-12
     return -10 * th.log(mse) / np.log(10)
 
