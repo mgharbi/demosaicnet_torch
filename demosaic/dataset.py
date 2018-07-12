@@ -27,7 +27,7 @@ class SRGB2Linear(object):
   def __call__(self, im):
     return np.where(im <= self.thresh,
                     im / self.scale,
-                    np.power((im + self.a) / (1 + self.a), self.gamma))
+                    np.power((np.maximum(im, self.thresh) + self.a) / (1 + self.a), self.gamma))
 
 class Linear2SRGB(object):
   def __init__(self):
@@ -149,9 +149,10 @@ class DemosaicDataset(Dataset):
     # read image
     im = skio.imread(impath).astype(np.float32) / 255.0
 
-    # Jitter the quantized values
-    im += np.random.normal(0, 0.005, size=im.shape)
-    im = np.clip(im, 0, 1)
+    # if self.augment:
+    #   # Jitter the quantized values
+    #   im += np.random.normal(0, 0.005, size=im.shape)
+    #   im = np.clip(im, 0, 1)
 
     if self.augment:
       if np.random.uniform() < 0.5:

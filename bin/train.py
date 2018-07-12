@@ -88,25 +88,40 @@ def main(args, model_params):
   cbacks = [
       default_callbacks.LossCallback(env=name),
       callbacks.DemosaicVizCallback(val_data, model, model_ref, cuda=True, 
-                                    shuffle=True, env=name),
+                                    shuffle=False, env=name),
       callbacks.PSNRCallback(env=name),
       ]
 
   metrics = {
-      "psnr": losses.PSNR(crop=8)
+      "psnr": losses.PSNR(crop=4)
       }
 
   log.info("Using {} loss".format(args.loss))
   if args.loss == "l2":
     criteria = { "l2": losses.L2Loss(), }
+  elif args.loss == "l1":
+    criteria = { "l1": losses.L1Loss(), }
+  elif args.loss == "gradient":
+    criteria = { 
+      "gradient": losses.GradientLoss(), 
+    }
+  elif args.loss == "laplacian":
+    criteria = { 
+      "laplacian": losses.LaplacianLoss(), 
+    }
   elif args.loss == "vgg":
     criteria = { "vgg": losses.VGGLoss(), }
   else:
     raise ValueError("not implemented")
 
+  optimizer = optim.Adam
+  optimizer_params = {}
+  if args.optimizer == "sgd":
+    optimizer = optim.SGD
+    optimizer_params = {"momentum": 0.9}
   train_params = Trainer.Parameters(
-      viz_step=100, lr=args.lr, batch_size=args.batch_size)
-      # optimizer=toptim.SVAG)
+      viz_step=100, lr=args.lr, batch_size=args.batch_size,
+      optimizer=optimizer, optimizer_params=optimizer_params)
 
   trainer = Trainer(
       data, model, criteria, output=args.output, 
@@ -131,7 +146,8 @@ if __name__ == "__main__":
   parser.add_argument('--batch_size', type=int, default=16)
   parser.add_argument('--lr', type=float, default=1e-4)
   parser.add_argument('--fix_seed', dest="fix_seed", action="store_true")
-  parser.add_argument('--loss', default="l2", choices=["l1", "vgg", "l2"])
+  parser.add_argument('--loss', default="l2", choices=["l1", "vgg", "l2", "gradient", "laplacian"])
+  parser.add_argument('--optimizer', default="adam", choices=["adam", "sgd"])
 
   # Monitoring
   parser.add_argument('--debug', dest="debug", action="store_true")

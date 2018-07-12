@@ -13,6 +13,7 @@ import torchvision.models as tmodels
 
 from torchlib.modules import Autoencoder
 from torchlib.modules import ConvChain
+from torchlib.modules.image_processing import ImageGradients, LaplacianFilter
 from torchlib.image import crop_like
 import torchlib.viz as viz
 
@@ -27,6 +28,49 @@ class L2Loss(nn.Module):
     target = crop_like(data["target"], output)
     return self.mse(output, target) * self.weight
 
+class L1Loss(nn.Module):
+  """ """
+  def __init__(self, weight=1.0):
+    super(L1Loss, self).__init__()
+    self.l1 = nn.L1Loss()
+    self.weight = weight
+
+  def forward(self, data, output):
+    target = crop_like(data["target"], output)
+    return self.l1(output, target) * self.weight
+
+class GradientLoss(nn.Module):
+  """ """
+  def __init__(self, weight=1.0):
+    super(GradientLoss, self).__init__()
+    self.l2 = nn.MSELoss()
+    self.weight = weight
+    self.grads = ImageGradients(3)
+
+  def forward(self, data, output):
+    target = crop_like(data["target"], output)
+    gradients_tgt = self.grads(target)
+    gradients_out = self.grads(output)
+
+    return self.l2(gradients_out, gradients_tgt)
+
+class LaplacianLoss(nn.Module):
+  """ """
+  def __init__(self, weight=1.0):
+    super(LaplacianLoss, self).__init__()
+    self.l2 = nn.MSELoss()
+    self.weight = weight
+    self.grads = LaplacianFilter(3)
+
+  def forward(self, data, output):
+    target = crop_like(data["target"], output)
+    gradients_tgt = self.grads(target)
+    gradients_out = self.grads(output)
+    # import torchlib.debug as D
+    # D.tensor(gradients_tgt, key="target")
+    # D.tensor(gradients_out, key="out")
+    # import ipdb; ipdb.set_trace()
+    return self.l2(gradients_out, gradients_tgt)
 
 class PSNR(nn.Module):
   """ """

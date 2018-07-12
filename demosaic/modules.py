@@ -59,6 +59,7 @@ def get(params):
     raise ValueError("model has not been specified!")
   return getattr(sys.modules[__name__], model_name)(**params)
 
+
 class GreenOnly(nn.Module):
   def __init__(self, mdl):
     super(GreenOnly, self).__init__()
@@ -69,6 +70,7 @@ class GreenOnly(nn.Module):
     output[:, 0] = 0
     output[:, 2] = 0
     return output
+
 
 class Subsample(nn.Module):
   def __init__(self, mdl, period, dx=0, dy=0):
@@ -94,6 +96,7 @@ class Subsample(nn.Module):
     samples["target"] = self.mask_out(samples["target"], 0)
 
     return output
+
 
 class DeLinearize(nn.Module):
   def __init__(self, mdl):
@@ -295,6 +298,7 @@ class BayerExperimental(nn.Module):
 
     return output
 
+
 class BayerNN(nn.Module):
   """2018-03-30"""
   def __init__(self, fov=5, normalize=True):
@@ -359,6 +363,7 @@ class BayerNN(nn.Module):
     output = out_f.contiguous().view(bs, 3, h*2, w*2)
 
     return output
+
 
 class BayerLog(nn.Module):
   """2018-04-01"""
@@ -452,6 +457,7 @@ class BayerLog(nn.Module):
     out_f = out_f.contiguous().view(bs, 3, 2*h, 2*w)
 
     return out_f
+
 
 class BayerKP(nn.Module):
   """2018-05-18: kernel-predicting Bayer"""
@@ -569,6 +575,7 @@ class BayerKP(nn.Module):
 
     return output
 
+
 class SimpleKP(nn.Module):
   """2018-07-03: kernel-predicting Bayer"""
   def __init__(self, ksize=5, convs=1, levels=3, width=32, mosaic_period=2,
@@ -617,6 +624,7 @@ class SimpleKP(nn.Module):
     output = th.cat(chans, 1)
 
     return output
+
 
 class IndependentKP(nn.Module):
   """
@@ -998,21 +1006,17 @@ class NeighborhoodNet(nn.Module):
 
     self.net0 = nn.Sequential(
       nn.Linear(self.ksize**2, width),
-      nn.ReLU(inplace=True),
+      nn.Tanh(),
       nn.Linear(width, width),
-      nn.ReLU(inplace=True),
-      nn.Linear(width, width),
-      nn.ReLU(inplace=True),
+      nn.Tanh(),
       nn.Linear(width, 1),
     )
 
     self.net1 = nn.Sequential(
       nn.Linear(self.ksize**2, width),
-      nn.ReLU(inplace=True),
+      nn.Tanh(),
       nn.Linear(width, width),
-      nn.ReLU(inplace=True),
-      nn.Linear(width, width),
-      nn.ReLU(inplace=True),
+      nn.Tanh(),
       nn.Linear(width, 1),
     )
 
@@ -1066,14 +1070,185 @@ class NeighborhoodNet(nn.Module):
 
       p = p.sum(1).view(bs*h2*w2, self.ksize**2)
       means = p.mean(-1, keepdim=True)
-      std = p.std(-1, keepdim=True)
+      # std = p.std(-1, keepdim=True)
 
       eps = 1e-4
-      p = (p-means) / (std + eps)
+      p = (p-means)
+      # p = (p-means) / (std + eps)
 
-      green = self._modules["net{}".format(site)](p) * (std + eps) + means
+      green = self._modules["net{}".format(site)](p) + means
+      # green = self._modules["net{}".format(site)](p) * (std + eps) + means
       green = green.view(bs, 1, h2, w2)
 
       output[:, :, dy:2*h2:self.period, dx:2*w2:self.period] = green
+
+    return output
+
+class TranslationInvariant(nn.Module):
+  """
+  2018-07-12
+  """
+
+  def __init__(self, ksize=3, width=64, period=2):
+    super(TranslationInvariant, self).__init__()
+
+    self.ksize = ksize
+    self.period = period
+
+    self.subnets = []
+    for idx in range(2):
+      module = nn.Sequential(
+        nn.Conv2d(1, width, self.ksize, stride=self.period),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, width, 1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, width, 1),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, 1, 1),
+      )
+      self.add_module("model_{}".format(idx), module)
+      self.subnets.append(module)
+
+  def forward(self, samples, kernel_list=None):
+    mosaic = samples["mosaic"]
+    mask = samples["mask"]
+    gray_mosaic = mosaic.sum(1, keepdim=True)
+    bs, _, h, w = gray_mosaic.shape
+
+    output = mosaic.clone()
+
+    module_id = -1
+    crop = 0
+    for offset_y in range(self.period):
+      for offset_x in range(self.period):
+        if offset_x == offset_y:  # we only predict green for Bayer for now
+          continue
+        center_pixel = self.ksize // 2
+        module_id += 1
+        crop_x = (offset_x - center_pixel) % self.period
+        crop_y = (offset_y - center_pixel) % self.period
+
+        start_x = crop_x + center_pixel
+        start_y = crop_y + center_pixel
+        
+        data = mosaic[:, :, crop_y:, crop_x:]
+        # import torchlib.debug as D
+        # D.tensor(data)
+        data = data.sum(1, keepdim=True)
+        green = self.subnets[module_id](data)
+        h2, w2 = green.shape[2:]
+
+        crop = max(crop, max(start_y, start_x))
+        crop = max(crop, max(start_y, start_x))
+
+        output[:, 1:2, start_y:self.period*h2+center_pixel:self.period,
+               start_x:self.period*w2+center_pixel:self.period] = green
+
+    if crop > 0:
+      output = output[..., crop:-crop, crop:-crop]
+      mask = mask[..., crop:-crop, crop:-crop]
+
+    return output
+
+class EdgeGreen(nn.Module):
+  """
+  2018-07-12
+  """
+
+  def __init__(self, ksize=3, width=64, period=2):
+    super(EdgeGreen, self).__init__()
+
+    self.ksize = ksize
+    self.period = period
+
+    self.nchoices = 4
+
+    self.subnets = []
+    self.temp = nn.Parameter(th.zeros(1, 1, 1, 1).cuda())
+    for idx in range(2):
+      module = nn.Sequential(
+        nn.Conv2d(1, width, self.ksize, stride=self.period),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, width, 3),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, width, 3),
+        nn.ReLU(inplace=True),
+        nn.Conv2d(width, self.nchoices, 1),
+        nn.Softmax(1),
+      )
+      self.add_module("model_{}".format(idx), module)
+      self.subnets.append(module)
+
+  def forward(self, samples, kernel_list=None):
+    mosaic = samples["mosaic"]
+    gray_mosaic = mosaic.sum(1, keepdim=True)
+    bs, _, h, w = gray_mosaic.shape
+
+    output = mosaic.clone()
+
+    mask = mosaic.new()
+    mask.resize_as_(mosaic)
+    mask.zero_()
+
+    # Green interpolation
+    if False:
+      hor = (mosaic[...,  1:2, :, :-2] + mosaic[...,  1:2, :, 2:])*0.5
+      vert = (mosaic[...,  1:2, :-2, :] + mosaic[..., 1:2, 2:, :])*0.5
+
+      hor = th.nn.functional.pad(hor, (1, 1, 0, 0)) + self.temp
+      vert = th.nn.functional.pad(vert, (0, 0, 1, 1)) + self.temp
+      hom = (hor+vert)*0.5
+
+      green_options = th.cat([hor, vert, hom], 1)
+    else:
+      g0 = th.nn.functional.pad(mosaic[...,  1:2, :, :-2], (1, 1, 0, 0))
+      g1 = th.nn.functional.pad(mosaic[...,  1:2, :, 2:], (1, 1, 0, 0))
+      g2 = th.nn.functional.pad(mosaic[...,  1:2, :-2, :], (0, 0, 1, 1))
+      g3 = th.nn.functional.pad(mosaic[...,  1:2, 2:, :], (0, 0, 1, 1))
+      green_options = th.cat([g0, g1, g2, g3], 1)
+
+    selector = mosaic.new()
+    selector.resize_(bs, self.nchoices, h, w)
+    selector.zero_()
+
+    period = self.period
+
+    module_id = -1
+    crop = 0
+    for offset_y in range(period):
+      for offset_x in range(period):
+        if offset_x == offset_y:  # we only predict green for Bayer for now
+          continue
+        center_pixel = self.ksize // 2
+        module_id += 1
+        crop_x = (offset_x - center_pixel) % period
+        crop_y = (offset_y - center_pixel) % period
+
+        start_x = crop_x + center_pixel
+        start_y = crop_y + center_pixel
+        
+        data = mosaic[:, :, crop_y:, crop_x:]
+        data = data.sum(1, keepdim=True)
+        cur_sel = self.subnets[module_id](data)
+        h2, w2 = cur_sel.shape[2:]
+
+        end_y = period*h2+center_pixel
+        end_x = period*w2+center_pixel
+
+        cur_opt = green_options[:, :, start_y:end_y:period, start_x:end_x:period]
+        output[:, 1, start_y:end_y:period, start_x:end_x:period] = (cur_sel*cur_opt).sum(1)
+
+        # import torchlib.debug as D
+        # D.tensor(cur_sel, key="selector_{}".format(module_id))
+        # D.tensor(cur_opt, key="options_{}".format(module_id))
+        # output[:, 1:2, 1::2, 0::2] = hom[:, 1:2, 1::2, 0::2]
+        # output[:, 1:2, ::2, 1::2] = hom[:, 1:2, ::2, 1::2]
+
+
+    # D.tensor(output[:, 1:2], key="green")
+    # import ipdb; ipdb.set_trace()
+
+    if crop > 0:
+      output = output[..., crop:-crop, crop:-crop]
 
     return output

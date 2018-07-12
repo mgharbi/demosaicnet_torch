@@ -1,3 +1,4 @@
+# -------------------------------------------
 inspect:
 	python bin/inspect_model.py output/simple_kp_bayer_large data/real_mosaic/bayer output/kernel_viz --offset_x 1 --offset_y 0 \
 		--shift_x 1024 --shift_y 1024
@@ -8,9 +9,11 @@ inspect_xtrans:
 inspect_data:
 	python bin/view_data.py data/images/test/filelist.txt --xtrans
 
+# -------------------------------------------
 analysis:
 	python bin/analysis.py data/images/test/filelist.txt --offset_x 1 --ksize 5
 
+# -------------------------------------------
 eval_bayer_kpae:
 	python bin/eval.py output/kpae_bayer_l2 data/real_mosaic/bayer output/eval/bayer --offset_x 1 \
 	--pretrained pretrained_models/bayer
@@ -27,7 +30,67 @@ eval_xtrans:
 	python bin/eval.py output/simple_kp_xtrans data/real_mosaic/xtrans output/eval/simple_kp_xtrans \
 	--pretrained pretrained_models/xtrans --xtrans
 
-# train
+# -- Train ------------------------------------
+
+# 2018-07-12
+
+train_ti_l2_k3:
+	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/tiles32/filelist.txt \
+		output/bayer_ti_l2_k3 \
+		--params model=TranslationInvariant period=2 ksize=3 \
+		--loss l2  --green_only \
+		--val_data data/images/val/filelist_vdp_short.txt --pretrained pretrained_models/bayer \
+		--batch_size 32 --lr 1e-4
+
+train_ti_l1_k3:
+	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/tiles32/filelist.txt \
+		output/bayer_ti_l1_k3 \
+		--params model=TranslationInvariant period=2 ksize=3 \
+		--loss l1  --green_only \
+		--val_data data/images/val/filelist_vdp_short.txt --pretrained pretrained_models/bayer \
+		--batch_size 32 --lr 1e-4
+
+train_ti_l2_k5:
+	CUDA_VISIBLE_DEVICES=0 python bin/train.py data/images/tiles32/filelist.txt \
+		output/bayer_ti_l2_k5 \
+		--params model=TranslationInvariant period=2 ksize=5 \
+		--loss l2  --green_only \
+		--val_data data/images/val/filelist_vdp_short.txt --pretrained pretrained_models/bayer \
+		--batch_size 32 --lr 1e-4
+
+train_ti_l1_k5:
+	CUDA_VISIBLE_DEVICES=0 python bin/train.py data/images/tiles32/filelist.txt \
+		output/bayer_ti_l1_k5 \
+		--params model=TranslationInvariant period=2 ksize=5 \
+		--loss l1  --green_only \
+		--val_data data/images/val/filelist_vdp_short.txt --pretrained pretrained_models/bayer \
+		--batch_size 32 --lr 1e-4
+
+train_ti_gl_k3:
+	CUDA_VISIBLE_DEVICES=0 python bin/train.py data/images/tiles32/filelist.txt \
+		output/bayer_ti_gl_k3 \
+		--params model=TranslationInvariant period=2 ksize=3 \
+		--loss laplacian --green_only --optimizer sgd \
+		--val_data data/images/val/filelist_vdp_short.txt --pretrained pretrained_models/bayer \
+		--batch_size 32 --lr 1e-3
+
+train_ti_gl_k5:
+	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/tiles32/filelist.txt \
+		output/bayer_ti_gl_k5 \
+		--params model=TranslationInvariant period=2 ksize=5 \
+		--loss laplacian  --green_only --optimizer sgd \
+		--val_data data/images/val/filelist_vdp_short.txt --pretrained pretrained_models/bayer \
+		--batch_size 32 --lr 1e-3
+
+train_eg:
+	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/tiles32/filelist.txt \
+		output/bayer_eg \
+		--params model=EdgeGreen period=2 ksize=3 \
+		--loss gradient  --green_only --optimizer adam \
+		--val_data data/images/val/filelist_vdp_short.txt --pretrained pretrained_models/bayer \
+		--batch_size 32 --lr 1e-4
+
+# previous --------------------------------------
 train_simple_kp_bayer:
 	python bin/train.py data/images/train/filelist.txt output/simple_kp_bayer \
 		--params model=SimpleKP mosaic_period=2 --loss l2\
@@ -85,7 +148,25 @@ train_tick_bayer_go:
 
 train_neighborhood:
 	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/train/filelist.txt output/neighborhood \
-		--params model=NeighborhoodNet period=2 --loss l2 \
+		--params model=NeighborhoodNet width=128 period=2 --loss l2 \
+		--pretrained pretrained_models/bayer --green_only \
+		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-4
+
+train_vgg_neighborhood:
+	CUDA_VISIBLE_DEVICES=1 python bin/train.py data/images/train/filelist.txt output/vgg_neighborhood \
+		--params model=NeighborhoodNet width=128 period=2 --loss vgg \
+		--pretrained pretrained_models/bayer --green_only \
+		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-4
+
+train_big_neighborhood:
+	CUDA_VISIBLE_DEVICES=0 python bin/train.py data/images/train/filelist.txt output/big_neighborhood \
+		--params model=NeighborhoodNet ksize=5 period=2 --loss l2\
+		--pretrained pretrained_models/bayer --green_only \
+		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-4
+
+train_bigger_neighborhood:
+	CUDA_VISIBLE_DEVICES=0 python bin/train.py data/images/train/filelist.txt output/bigger_neighborhood \
+		--params model=NeighborhoodNet ksize=7 width=32 period=2 --loss l2\
 		--pretrained pretrained_models/bayer --green_only \
 		--val_data data/images/val/filelist.txt --batch_size 1 --lr 1e-4
 

@@ -8,8 +8,10 @@ import torchlib.utils as utils
 from torchlib.image import crop_like
 import demosaic.losses as losses
 
+from torchlib.modules.image_processing import ImageGradients
+
 class DemosaicVizCallback(callbacks.Callback):
-  def __init__(self, data, model, ref, env=None, batch_size=8, 
+  def __init__(self, data, model, ref, env=None, batch_size=16, 
                shuffle=False, cuda=True, period=500):
     super(DemosaicVizCallback, self).__init__()
     self.batch_size = batch_size
@@ -26,6 +28,8 @@ class DemosaicVizCallback(callbacks.Callback):
     self.counter = 0
 
     self.psnr = losses.PSNR(crop=8)
+
+    self.grads = ImageGradients(3).cuda()
 
   # def on_epoch_end(self, epoch, logs):
   def on_batch_end(self, batch, batch_id, num_batches, logs):
@@ -58,7 +62,20 @@ class DemosaicVizCallback(callbacks.Callback):
       target = crop_like(target, output)
       mosaic = crop_like(mosaic, output)
 
-      vizdata = th.cat( [mosaic, output, output_ref, target], 0)
+      diff = (output-target)
+
+      gdiff = self.grads(diff).abs()
+      gdiff = th.nn.functional.pad(gdiff, (0, 1, 0, 1))
+
+      diff = diff.abs()
+
+      gdiff_x = gdiff[:, :3]
+      gdiff_y = gdiff[:, 3:]
+
+      gdiff_x = gdiff_x / (target + 1e-4)
+      gdiff_y = gdiff_y / (target + 1e-4)
+
+      vizdata = th.cat( [mosaic, output, output_ref, target, diff, gdiff_x, gdiff_y], 0)
       vizdata = np.clip(vizdata.cpu().numpy(), 0, 1)
 
       psnr = self.psnr(batch_v, output).item()
@@ -67,7 +84,7 @@ class DemosaicVizCallback(callbacks.Callback):
       # Display
       self.batch_viz.update(
           vizdata, per_row=self.batch_size, 
-          caption="{} | input, ours(new) {:.1f} dB, ours(2016) {:.1f} dB, reference".format(
+          caption="{} | input, ours(new) {:.1f} dB, ours(2016) {:.1f} dB, reference, diff, gdiff".format(
             self.current_epoch, psnr, psnr_ref))
 
       return  # process only one batch
